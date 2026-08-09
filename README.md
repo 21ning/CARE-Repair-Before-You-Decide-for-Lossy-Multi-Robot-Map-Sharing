@@ -114,7 +114,9 @@ are documented in [docs/REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md).
 ## Generate the POGEMA demo
 
 The README animation runs one PSR-UT episode with eight agents and 30% packet
-loss, then replays the recorded actions in POGEMA.
+loss, then replays the recorded actions in POGEMA. It visualizes Robot 1's
+actual local replica rather than the ground-truth map: gray cells are unknown,
+white cells were observed locally, and blue cells were learned from peers.
 
 ```bash
 python scripts/make_pogema_demo.py --output assets/pogema_demo.gif

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from time import process_time
-from typing import Iterable
+from typing import Callable, Iterable
 
 import numpy as np
 from pogema import GridConfig, pogema_v0
@@ -90,9 +90,15 @@ class _DeliveryTask:
 class PSRClosedLoopRunner:
     """Run one explicit-replica policy on a fixed instance and link trace."""
 
-    def __init__(self, *, policy: ReplicaPolicy, config: PSRConfig) -> None:
+    def __init__(
+        self, *, policy: ReplicaPolicy, config: PSRConfig,
+        step_observer: Callable[
+            [int, tuple[BeliefMap, ...], tuple[Coordinate, ...]], None
+        ] | None = None,
+    ) -> None:
         self.policy = ReplicaPolicy(policy)
         self.config = config
+        self.step_observer = step_observer
         self.adapter = PlanningMapAdapter("optimistic")
         self.pessimistic_adapter = PlanningMapAdapter("pessimistic")
         self.planner = AStarPlanner()
@@ -143,6 +149,8 @@ class PSRClosedLoopRunner:
             paths = self._paths(beliefs, positions, instance.goals)
             self._dispatch_data(network, step, beliefs, outboxes, full_repair_outboxes, data_budget, control_budget, paths, positions, instance.goals)
             repair_events += self._drain_arrivals(network, step, beliefs, outboxes, full_repair_outboxes, data_budget, control_budget)
+            if self.step_observer is not None:
+                self.step_observer(step, tuple(belief.clone() for belief in beliefs), positions)
             paths = self._paths(beliefs, positions, instance.goals)
             replica_error = self._replica_error(beliefs)
             repairable, path_truth_error = self._path_errors(beliefs, paths, instance.obstacle_map)

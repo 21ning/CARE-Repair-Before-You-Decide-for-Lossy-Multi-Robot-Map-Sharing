@@ -3,8 +3,7 @@ from __future__ import annotations
 from cmvr.communication import CommunicationBudget, LinkConfig, MessageStatus, UnreliableNetwork
 from cmvr.env import PSRClosedLoopRunner, PSRConfig, ReplicaPolicy, generate_instance
 from cmvr.env.psr_runner import _DeliveryTask
-from cmvr.mapping import MapUpdate
-from cmvr.mapping import BeliefMap
+from cmvr.mapping import BeliefMap, CellState, MapUpdate
 from cmvr.utils.config import ExperimentConfig
 
 
@@ -35,6 +34,25 @@ def test_psr_runner_is_deterministic_and_accounts_for_repair() -> None:
         + first.network_summary["attempted_control_bytes"]
         + first.network_summary["attempted_repair_bytes"]
     )
+
+
+def test_step_observer_receives_isolated_replica_snapshots() -> None:
+    snapshots = []
+    runner = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.UTILITY_TRIGGERED_REPAIR,
+        config=_config(loss=0.0),
+        step_observer=lambda step, beliefs, positions: snapshots.append(
+            (step, beliefs, positions)
+        ),
+    )
+    result = runner.run(_instance())
+
+    assert len(snapshots) == result.episode_length
+    assert snapshots[0][0] == 0
+    assert len(snapshots[0][1]) == _instance().num_agents
+    fingerprint = snapshots[0][1][0].fingerprint()
+    snapshots[-1][1][0].occupancy.fill(CellState.UNKNOWN)
+    assert snapshots[0][1][0].fingerprint() == fingerprint
 
 
 def test_retry_all_uses_ack_control_traffic_and_no_comm_uses_none() -> None:
