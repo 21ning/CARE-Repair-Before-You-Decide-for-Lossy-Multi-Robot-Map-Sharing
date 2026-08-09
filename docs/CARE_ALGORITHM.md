@@ -1,4 +1,4 @@
-# CARE-DC: deadline-constrained decision certificates
+# CARE: deadline-constrained decision certificates
 
 CARE treats lossy map repair as a finite communication optimization problem,
 not as a learned retransmission rule. Robot `i` uses only its explicit local
@@ -83,6 +83,12 @@ where `P` is one bounded shortest-path call. With `n=8`, `q=2`, the largest
 online problem has 37 scenarios and 256 query subsets. These caps are explicit
 computational assumptions, not hidden experimental tuning.
 
+The runner also computes the uncapped candidate set before applying `n=8`.
+It records a cap hit exactly when the uncapped set contains more than eight
+cells. The reported hit rate is therefore an audited approximation-pressure
+diagnostic, not an outcome inferred from successful episodes. Separate paired
+ablations use `n=4`, `n=8`, `n=12`, `q=1`, and `q=2`.
+
 ## Route-commitment certificate
 
 Scenario separation determines which cells distinguish locally plausible
@@ -124,6 +130,24 @@ does not guarantee decision consistency for arbitrary unbounded map
 uncertainty, does not assume that a peer knows every requested cell, and does
 not claim to dominate reliable ARQ in absolute success. CARE targets a compact
 reliability--traffic operating point under decision-critical map loss.
+
+## Causal timing diagnostics
+
+Structured instances store evaluation-only observer--seeker landmarks. These
+landmarks are parsed by result instrumentation but never exposed to the
+communication policy or planner. For each critical obstacle, the runner logs:
+
+- `t_peer`: its first inclusion in the remote observer's square POGEMA sensor;
+- `t_self`: its first inclusion in the seeker's own sensor, if that event occurs;
+- `t_commit`: the first non-wait action taken from the declared branch cell;
+- signed usable window `W=t_commit-t_peer-2d`, where `d` is one-way link delay.
+
+Event coverage is reported with every conditional timing mean. A missing
+self-observation or commitment is not silently converted to zero. In the
+controlled fork geometry, changing the sensor radius does not move the remote
+observer or branch, so at zero delay `W` is intentionally fixed; sensor range
+instead changes self-observation coverage and certificate candidate pressure.
+The delay sweep is the intervention that shortens `W`.
 
 ## Planner independence
 

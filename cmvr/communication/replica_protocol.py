@@ -139,9 +139,13 @@ class ScenarioCertificate:
 
 def decision_candidate_cells(
     belief: BeliefMap, optimistic_path: tuple[Coordinate, ...], *,
-    max_horizon: int, max_candidates: int,
+    max_horizon: int, max_candidates: int | None,
 ) -> tuple[Coordinate, ...]:
     """Unknown action-graph vertices ordered by earliest path influence."""
+    if max_horizon < 1:
+        raise ValueError("max_horizon must be positive")
+    if max_candidates is not None and max_candidates < 1:
+        raise ValueError("max_candidates must be positive when set")
     priority: dict[Coordinate, tuple[int, int, int, int]] = {}
     for path_index, (x, y) in enumerate(optimistic_path[1:max_horizon + 1], start=1):
         for distance, cell in (
@@ -152,7 +156,8 @@ def decision_candidate_cells(
                 continue
             key = path_index, distance, cell[0], cell[1]
             priority[cell] = min(priority.get(cell, key), key)
-    return tuple(sorted(priority, key=priority.__getitem__)[:max_candidates])
+    ordered = tuple(sorted(priority, key=priority.__getitem__))
+    return ordered if max_candidates is None else ordered[:max_candidates]
 
 
 def scenario_blocked_sets(

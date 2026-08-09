@@ -43,7 +43,47 @@ def test_psr_suite_preserves_every_decimal_density_instance(tmp_path) -> None:
     run_suite(config, tmp_path)
     names = sorted(path.name for path in (tmp_path / "instances").glob("*.json"))
     assert len(names) == 2
-    assert all(name.startswith("density-0p20_layout-") for name in names)
+    assert all(name.startswith("density-0p20_radius-3_layout-") for name in names)
+
+
+def test_psr_suite_matches_layouts_across_observation_radii(tmp_path) -> None:
+    config = {
+        "instance_family": "multifork_cluttered",
+        "seeds": [2], "map_size": 32, "obstacle_densities": [.2], "num_agents": 8,
+        "observation_radii": [1, 2, 3], "max_episode_steps": 25,
+        "data_bytes_per_agent_per_step": 4459, "control_bytes_per_agent_per_step": 512,
+        "repair_interval_steps": 1, "sync_interval_steps": 4,
+        "corridor_horizon": 8, "corridor_radius": 1,
+        "certificate_max_cells": 8, "certificate_uncertainty_order": 2,
+        "digest_base_bytes": 16, "digest_entry_bytes": 6,
+        "ack_bytes": 8, "patch_base_bytes": 4,
+        "loss_probabilities": [0.0], "delay_steps": [0],
+        "policies": ["one_shot_delta"], "link_seed": 7,
+    }
+    run_suite(config, tmp_path)
+    rows = list(csv.DictReader((tmp_path / "results.csv").open()))
+    assert [int(row["observation_radius"]) for row in rows] == [1, 2, 3]
+    assert len({row["layout_fingerprint"] for row in rows}) == 1
+    assert len({row["instance_fingerprint"] for row in rows}) == 3
+    assert len(tuple((tmp_path / "instances").glob("*.json"))) == 3
+    assert len(tuple((tmp_path / "instances").glob("*.npz"))) == 3
+
+
+def test_psr_suite_accepts_compact_seed_count(tmp_path) -> None:
+    config = {
+        "seed_count": 2, "map_size": 10, "obstacle_densities": [.15], "num_agents": 3,
+        "observation_radius": 2, "max_episode_steps": 12,
+        "data_bytes_per_agent_per_step": 52, "control_bytes_per_agent_per_step": 256,
+        "repair_interval_steps": 2, "sync_interval_steps": 4,
+        "corridor_horizon": 4, "corridor_radius": 1,
+        "digest_base_bytes": 16, "digest_entry_bytes": 6,
+        "ack_bytes": 8, "patch_base_bytes": 4,
+        "loss_probabilities": [0.0], "delay_steps": [0],
+        "policies": ["one_shot_delta"], "link_seed": 7,
+    }
+    run_suite(config, tmp_path)
+    rows = list(csv.DictReader((tmp_path / "results.csv").open()))
+    assert [row["layout_seed"] for row in rows] == ["0", "1"]
 
 
 def test_psr_suite_can_persist_preregistered_fork_instances(tmp_path) -> None:

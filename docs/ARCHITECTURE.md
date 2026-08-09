@@ -32,7 +32,7 @@ flowchart LR
 | `cmvr/communication/unreliable.py` | 有向、固定 seed 的丢包/延迟信道与 event log | 所有 delta、digest、ACK 和 repair 都经过同一对象；输出按 data/control/repair 分项计费。 |
 | `cmvr/communication/replica_protocol.py` | policy、digest、scenario/deadline certificate 和 patch payload | 枚举有界稀疏场景并精确求解最小 hitting set；同时计算 route deadline；不访问真值地图或 peer 内存。 |
 | `cmvr/communication/wire.py` | 固定宽度二进制 codec、CRC、字段边界和精确长度 | runner 在发送前编码、到达后解码；network 只接受 `bytes` 且强制 `len(payload) == byte_size`。 |
-| `cmvr/env/instance.py`、`structured_instances.py` | 随机与决策关键拓扑实例 | 为所有配对策略生成同一个可指纹化实例。 |
+| `cmvr/env/instance.py`、`structured_instances.py` | 随机与决策关键拓扑实例 | 为所有配对策略生成同一个可指纹化实例；`layout_fingerprint` 只编码物理布局，不把 seed 标签伪装成地图差异。 |
 | `cmvr/env/psr_runner.py` | 唯一的 closed-loop 执行器 | 编排观测、A*、通信、交付、修复与 POGEMA 动作，并生成 episode 级与 step 级指标。 |
 | `cmvr/utils/` | 配置和随机种子 | 保证跨进程、跨重跑的一致性。 |
 
@@ -70,27 +70,25 @@ version、长度、保留位、字段边界与 Delta CRC，再重建 update 并�
 | 脚本 | 输入 | 输出 |
 | --- | --- | --- |
 | `run_psr_suite.py` | 一个 YAML 或等价 config | `instances/`、`results.csv`、`traces.csv`、`summary.json` |
-| `run_psr_100map_matrix.py` | 内置正式 13-study 设计 | formal matrix manifest 与各 study 输出 |
-| `run_psr_scale_100map.py` | 内置 4/8/16/32-agent 设计 | scale manifest 与各 study 输出 |
-| `analyze_psr_100map_matrix.py` | formal matrix | 每条件均值、样本标准差、bootstrap CI、PSR-UT 配对差异 |
-| `analyze_psr_external_baselines.py` | 一个或多个 30%-loss、零延迟的匹配 `results.csv` | 主 baseline 汇总与 PSR-UT 配对比较；Periodic Full 与正式 loss sweep 在此合并 |
-| `analyze_psr_full_method_ablations.py` | formal 和 action-ablation 根目录 | 全方法对单组件 ablation 的配对差异 |
-| `analyze_psr_topology_variants.py` | 三个 topology 根目录 | topology extension 汇总 |
-| `analyze_care_deadline_cross_planner.py` | CARE 的 3,200-episode 完整矩阵 | 跨规划器均值、标准差、CI、paired effect、deadline diagnostics 和 gate |
+| `run_care_extension_matrix.py` | 5×5 下的 density、topology、scale、q/cap/cadence 设计 | 12,000-episode manifest 与各 study 输出 |
+| `analyze_care_observation_radius.py` | 3×3/5×5/7×7 的 6,000-episode 匹配矩阵 | FOV 汇总、配对差异、交互效应、因果时间和 cap 命中率 |
+| `analyze_care_extension_matrix.py` | CARE extension manifest 与 5×5 主矩阵 | 均值/SD/CI、扩展配对比较、full-method ablation |
+| `audit_care_cross_study_reproducibility.py` | 主/FOV/delay/density 独立重跑 | 除 CPU timing 外逐字段完全一致性审计 |
 | `make_care_deadline_artifacts.py` | CARE analysis | 跨规划器主表和 delay figure |
 | `analyze_care_certificate.py` | 双证书 3,200-episode gate | 配对 non-inferiority、traffic 和 CPU promotion gate |
 | `analyze_care_loss_baselines.py` | 9,600-episode loss/baseline matrix | map-cluster CI、paired effect size 和 Pareto frontier |
 | `make_care_loss_baseline_artifacts.py` | final audited analysis | 最终 baseline 表和 loss/traffic figure |
-| `make_psr_ut_paper_artifacts.py` | formal summary，及可选 periodic summary | 论文主表、Pareto 图、loss 曲线和 two-gate 示意图 |
+| `make_care_observation_radius_artifacts.py` | FOV analysis | 5×5 主表、3×3/7×7 扩展表与 FOV 图 |
+| `make_care_extension_artifacts.py` | extension analysis | paired ablation、density/topology/scale/negative-control 表图 |
 
 所有 runner 拒绝覆盖非空输出目录。这是为了防止新运行静默混入已冻结的
 100-map 证据。完整命令见 `docs/REPRODUCIBILITY.md`。
 
 ## 测试边界
 
-`tests/` 覆盖 A*、D* Lite 增量更新及 A* 最短路一致性、实例确定性、地图 stamp 合并、丢包链路、CARE runner、
-周期反熵的预算/轮转、并行与串行的结果一致性，以及分析脚本的 complete
-matched-matrix 检查。运行：
+`tests/` 覆盖 A*、D* Lite 增量更新及 A* 最短路一致性、实例确定性、物理
+layout 指纹与 100-map 唯一性、地图 stamp 合并、丢包链路、CARE runner、
+周期反熵的预算/轮转、因果时间/cap 指标，以及并行与串行结果一致性。运行：
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python -m pytest -q

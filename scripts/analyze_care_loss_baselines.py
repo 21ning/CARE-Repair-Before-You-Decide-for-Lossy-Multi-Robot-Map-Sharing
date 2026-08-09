@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze CARE-DC against matched communication baselines across loss rates."""
+"""Analyze CARE against matched communication baselines across loss rates."""
 
 from __future__ import annotations
 
@@ -47,13 +47,13 @@ def analyze(input_directory: Path, output_directory: Path) -> None:
         raise ValueError(f"expected {expected} complete rows, found {len(rows)}")
     fingerprints_by_seed = defaultdict(set)
     for row in rows:
-        fingerprints_by_seed[row["layout_seed"]].add(row["instance_fingerprint"])
+        fingerprints_by_seed[row["layout_seed"]].add(row["layout_fingerprint"])
     if set(fingerprints_by_seed) != {str(seed) for seed in range(100)}:
         raise ValueError("layout seed set is not exactly 0..99")
     if any(len(values) != 1 for values in fingerprints_by_seed.values()):
-        raise ValueError("a layout seed maps to multiple instance fingerprints")
+        raise ValueError("a layout seed maps to multiple physical layouts")
     if len({next(iter(values)) for values in fingerprints_by_seed.values()}) != 100:
-        raise ValueError("the matrix does not contain 100 unique map fingerprints")
+        raise ValueError("the matrix does not contain 100 unique physical layouts")
     groups = defaultdict(dict)
     for row in rows:
         condition = row["planner"], float(row["loss_probability"]), row["policy"]
@@ -142,7 +142,7 @@ def analyze(input_directory: Path, output_directory: Path) -> None:
         "complete": True,
         "episodes": expected,
         "independent_maps_per_condition": 100,
-        "unique_map_fingerprints": 100,
+        "unique_physical_layouts": 100,
         "planners": list(PLANNERS),
         "loss_probabilities": list(LOSSES),
         "policies": list(POLICIES),

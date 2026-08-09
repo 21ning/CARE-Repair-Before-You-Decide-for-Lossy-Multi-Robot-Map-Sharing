@@ -26,7 +26,7 @@ LABELS = {
     "mismatch_triggered_full_repair": "Mismatch Full",
     "utility_triggered_repair": "PSR-UT",
     "deadline_aware_repair": "CARE-Lite",
-    "certificate_repair": "CARE-DC",
+    "certificate_repair": "CARE",
 }
 PLANNERS = ("astar", "dstar_lite")
 PLANNER_LABELS = {"astar": "A*", "dstar_lite": "D* Lite"}
@@ -52,6 +52,9 @@ def make(analysis_directory: Path, table_directory: Path, figure_directory: Path
     }
     table_directory.mkdir(parents=True, exist_ok=True)
     figure_directory.mkdir(parents=True, exist_ok=True)
+    (table_directory / "care_loss_baselines_manifest.json").write_text(
+        (analysis_directory / "analysis_manifest.json").read_text()
+    )
 
     primary_rows = []
     for planner in PLANNERS:
@@ -92,7 +95,7 @@ def make(analysis_directory: Path, table_directory: Path, figure_directory: Path
             csr = paired_lookup[(planner, .3, comparator, "completion_success_rate")]
             traffic = paired_lookup[(planner, .3, comparator, "attempted_bytes")]
             paired_rows.append({
-                "planner": PLANNER_LABELS[planner], "comparison": f'CARE-DC - {LABELS[comparator]}',
+                "planner": PLANNER_LABELS[planner], "comparison": f'CARE - {LABELS[comparator]}',
                 "csr_difference": f'{float(csr["mean_difference"]):+.4f}',
                 "csr_ci95": f'[{float(csr["ci95_low"]):+.4f}, {float(csr["ci95_high"]):+.4f}]',
                 "csr_effect_dz": f'{float(csr["paired_effect_dz"]):+.3f}',
@@ -104,8 +107,8 @@ def make(analysis_directory: Path, table_directory: Path, figure_directory: Path
             })
     _write_csv(table_directory / "care_loss_baselines_paired.csv", paired_rows)
     paired_markdown = [
-        "# Paired CARE-DC comparisons at 30% packet loss", "",
-        "Differences are CARE-DC minus the matched comparator on each of 100 maps.", "",
+        "# Paired CARE comparisons at 30% packet loss", "",
+        "Differences are CARE minus the matched comparator on each of 100 maps.", "",
         "| Planner | Comparison | CSR difference [95% CI] | Effect dz | Traffic difference KB [95% CI] |",
         "| --- | --- | ---: | ---: | ---: |",
     ]

@@ -1,30 +1,29 @@
 # CARE claim--evidence audit
 
-This audit freezes what the submission may and may not claim.
-
-| Claim | Direct evidence | Status / boundary |
+| Claim | Evidence | Frozen status / boundary |
 | --- | --- | --- |
-| The scenario query is minimum encoded size in the declared family. | `minimum_scenario_certificate`; exact enumeration tests in `tests/test_replica_protocol.py`; theorem in `CARE_ALGORITHM.md`. | Proven for at most 8 candidate cells, at most 2 blocked candidates, uniform 6-byte query entries. Not an unbounded robust-map theorem. |
-| The repair decision uses no truth map or peer memory. | `replica_protocol.py` accepts receiver `BeliefMap`/paths; peer state is accessed only after an encoded query is delivered. | Supported by interface and runner separation. |
-| CARE improves over One-shot at 30% loss. | `care_loss_baselines_paired.csv`: A* +0.0975 [0.0788, 0.1163], D* Lite +0.0950 [0.0775, 0.1125]. | Supported; map/trace paired. |
-| CARE reduces traffic versus PSR-UT without detected primary-point reliability loss. | A*: +0.0050 CSR [-0.0125, 0.0225], -7.98 KB [-8.20, -7.76]. D*: +0.0100 CSR [-0.0063, 0.0262], -7.97 KB. | Supported as statistical equivalence/non-inferiority plus lower traffic, not proof of identical policies. |
-| Exact certificates improve CARE-Lite efficiency. | A*: +0.0000 CSR [-0.0138, 0.0138], -0.83 KB [-1.00, -0.66]. D*: +0.0013 CSR [-0.0125, 0.0150], -0.94 KB. | Supported at the 30% primary point. At 50% loss CARE trades CSR for lower traffic. |
-| CARE is robust across packet-loss rates. | Six-loss sweep in `care_loss_baseline_sweep.png`; positive paired gain over One-shot for every nonzero loss rate. | Supported for i.i.d. loss probabilities 0.1--0.5. No burst-loss claim. |
-| CARE is planner-independent. | Full matched matrix repeated under A* and D* Lite; same qualitative ordering and near-identical traffic. | Supported for these two four-neighbor shortest-path planners, not arbitrary learned planners. |
-| CARE dominates all baselines. | ARQ and Periodic Full obtain higher CSR at much higher traffic. | **Rejected.** The supported claim is a low-traffic Pareto operating point. |
-| CARE outperforms DCC/SCRIMP/PPO. | No representation-matched reproduction exists; those methods solve different policy/communication problems. | **Not claimed.** They are related work, not numerical baselines. |
-| CARE has negligible computation. | 0.767/0.867 s per 25-step episode under A*/D* Lite; 2.52x/2.09x CARE-Lite. | **Not claimed.** Computation is bounded and measured. |
+| The query is minimum encoded size in the declared scenario family. | Exact hitting-set enumeration, theorem and unit tests. | Proven for uniform 6-byte entries, q≤2 and the capped candidate set; not an unbounded robust-map theorem. |
+| Results use 100 independent physical maps. | Seed-free `layout_fingerprint`; analyzers reject duplicates; topology/density/scale 100-layout tests. | Supported. A seed label alone no longer counts as independence. |
+| CARE improves over One-shot in the 5×5 primary task. | A*: +0.0650 [0.0488, 0.0813]; D*: +0.0788 [0.0612, 0.0963]. | Supported with paired maps/traces. |
+| CARE is traffic-efficient versus reliable recovery. | Saves 101.20/101.75 KB versus Retry-All at a 0.0225/0.0175 CSR cost. | Supported as a tradeoff, not dominance. |
+| CARE retains PSR-UT/CARE-Lite reliability with less traffic. | Paired CSR CIs include zero; savings are about 9.5/3.8 KB. | Supported at 30% loss and zero delay. |
+| Benefits persist across sensing ranges. | CARE gain is 0.0000, +0.0650, +0.0975 at 3×3/5×5/7×7 with A*. | Supported only for 5×5 and 7×7. **Rejected at 3×3**, where map context is the bottleneck. |
+| The decision window explains delay behavior. | Signed window 2/0/-2/-6 at delays 0/1/2/4; gains disappear when non-positive. | Supported in the controlled fork geometry. |
+| cap=8 is a useful bounded middle point. | cap=4 loses 0.0213 CSR; cap=12 adds no detected CSR and costs ~1.48 s more. | Supported as an empirical/theoretical tradeoff, not a universal optimum. |
+| CARE generalizes across topology. | Positive gains on all three topologies, but +0.1537 on T and only +0.0112/+0.0213 on the other two. | Qualitative support with strong topology dependence. |
+| CARE helps arbitrary random maps. | Three of four random-control CIs include zero. | **Rejected.** The contribution is decision-critical repair, not generic exploration. |
+| CARE passes the old 3× compute gate. | Exact/CARE-Lite episode CPU ratios are 3.99× A* and 3.09× D*. | **Rejected.** Bounded and measured, not negligible. |
+| CARE dominates all baselines. | Retry-All/Periodic often obtain higher CSR at much higher traffic. | **Rejected.** CARE is a low-traffic operating point. |
+| CARE outperforms DCC/SCRIMP/PPO. | No representation-matched reproduction exists. | Not claimed; they solve different learned-policy tasks. |
 
-## Submission freeze checklist
+## Freeze checklist
 
-- complete final matrix: 9,600/9,600 episodes;
-- 100 independent map clusters in every condition;
-- map/trace pairing verified before statistics;
-- sample SD, 20,000-draw cluster CI and paired effect size retained;
-- full eight-policy primary table retained;
-- high-loss negative boundary retained;
-- A*/D* Lite planner sensitivity retained;
-- exact wire byte accounting and decoder validation retained;
-- complete test suite passes;
-- README, method document, paper and generated artifacts use the same final
-  method names and primary numbers.
+- 30,800/30,800 planned episodes complete;
+- 100 seed-free physical layout fingerprints in every condition;
+- A*/D* Lite, six loss rates, delay, FOV, density, topology and scale retained;
+- every ablation paired with full CARE on the same 100 layouts/traces;
+- mean, sample SD, 20,000-draw cluster CI and paired effect size retained;
+- cap-hit rate and conditional-event coverage retained;
+- 3×3, non-positive deadline, random-map and compute negative boundaries retained;
+- independent overlapping reruns agree on every non-CPU field;
+- tests, README, method document, manuscript and generated tables use the same numbers.

@@ -67,13 +67,13 @@ def analyze(
         raise ValueError(f"expected {expected_count} complete episodes, found {len(rows)}")
     fingerprints_by_seed = defaultdict(set)
     for row in rows:
-        fingerprints_by_seed[row["layout_seed"]].add(row["instance_fingerprint"])
+        fingerprints_by_seed[row["layout_seed"]].add(row["layout_fingerprint"])
     if set(fingerprints_by_seed) != {str(seed) for seed in range(100)}:
         raise ValueError("layout seed set is not exactly 0..99")
     if any(len(values) != 1 for values in fingerprints_by_seed.values()):
-        raise ValueError("a layout seed maps to multiple instance fingerprints")
+        raise ValueError("a layout seed maps to multiple physical layouts")
     if len({next(iter(values)) for values in fingerprints_by_seed.values()}) != 100:
-        raise ValueError("the matrix does not contain 100 unique map fingerprints")
+        raise ValueError("the matrix does not contain 100 unique physical layouts")
     groups = defaultdict(dict)
     for row in rows:
         condition = row["planner"], int(row["delay_steps"]), row["policy"]

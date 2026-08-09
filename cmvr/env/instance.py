@@ -19,6 +19,16 @@ from cmvr.utils.seeding import seed_everything
 Coordinate = Tuple[int, int]
 
 
+@dataclass(frozen=True)
+class CriticalDecisionPair:
+    """Evaluation-only causal landmarks for one observer--seeker pair."""
+
+    observer_id: int
+    seeker_id: int
+    obstacle: Coordinate
+    commitment: Coordinate
+
+
 def _pogema_metadata() -> Mapping[str, str]:
     try:
         package_version = version("pogema")
@@ -82,6 +92,25 @@ class EpisodeInstance:
         digest.update(canonical)
         return digest.hexdigest()
 
+    def layout_fingerprint(self) -> str:
+        """Hash physical task geometry, excluding seed labels and sensor radius."""
+        digest = sha256()
+        digest.update(b"cmvr-layout-v1\0")
+        digest.update(np.asarray(self.obstacle_map, dtype=np.uint8).tobytes(order="C"))
+        canonical = json.dumps(
+            {
+                "map_size": self.map_size,
+                "obstacle_density": self.obstacle_density,
+                "num_agents": self.num_agents,
+                "collision_system": self.collision_system,
+                "starts": self.starts,
+                "goals": self.goals,
+            },
+            separators=(",", ":"), sort_keys=True,
+        ).encode("utf-8")
+        digest.update(canonical)
+        return digest.hexdigest()
+
     def metadata_dict(self) -> dict[str, Any]:
         return {
             "schema_version": 1,
@@ -96,7 +125,37 @@ class EpisodeInstance:
             "goals": [list(p) for p in self.goals],
             "package_metadata": dict(self.package_metadata),
             "fingerprint": self.fingerprint(),
+            "layout_fingerprint": self.layout_fingerprint(),
         }
+
+
+def critical_decision_pairs(instance: EpisodeInstance) -> tuple[CriticalDecisionPair, ...]:
+    """Parse evaluation landmarks without exposing them to protocol logic."""
+    encoded = instance.package_metadata.get("critical_decision_pairs", "")
+    if not encoded:
+        return ()
+    pairs = []
+    for record in encoded.split(";"):
+        values = tuple(int(value) for value in record.split(","))
+        if len(values) != 6:
+            raise ValueError("critical decision pair must contain six integers")
+        observer, seeker, obstacle_x, obstacle_y, commit_x, commit_y = values
+        if (
+            observer == seeker
+            or min(observer, seeker) < 0
+            or max(observer, seeker) >= instance.num_agents
+        ):
+            raise ValueError("invalid critical observer/seeker identifiers")
+        obstacle, commitment = (obstacle_x, obstacle_y), (commit_x, commit_y)
+        if not all(
+            0 <= x < instance.map_size and 0 <= y < instance.map_size
+            for x, y in (obstacle, commitment)
+        ):
+            raise ValueError("critical decision landmark lies outside the map")
+        if int(instance.obstacle_map[obstacle]) != 1:
+            raise ValueError("critical obstacle landmark is not blocked")
+        pairs.append(CriticalDecisionPair(observer, seeker, obstacle, commitment))
+    return tuple(pairs)
 
 
 def generate_instance(config: ExperimentConfig) -> EpisodeInstance:
@@ -184,4 +243,9 @@ def load_instance(path: str | Path) -> EpisodeInstance:
     )
     if instance.fingerprint() != metadata["fingerprint"]:
         raise ValueError("instance fingerprint mismatch: files are inconsistent")
+    if (
+        "layout_fingerprint" in metadata
+        and instance.layout_fingerprint() != metadata["layout_fingerprint"]
+    ):
+        raise ValueError("layout fingerprint mismatch: files are inconsistent")
     return instance

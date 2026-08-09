@@ -71,13 +71,27 @@ def test_topology_variants_preserve_the_remote_route_change_mechanism() -> None:
         repair_interval_steps=1, max_digest_peers=1,
         link=LinkConfig(loss_probability=0.0, delay_steps=0, seed=1),
     )
+    for radius in (2, 3):
+        for topology in ("t_junction", "asymmetric_fork", "narrow_bypass"):
+            instance = generate_multifork_topology_variant_instance(
+                topology=topology, seed=0, observation_radius=radius,
+            )
+            assert instance.fingerprint() == generate_multifork_topology_variant_instance(
+                topology=topology, seed=0, observation_radius=radius,
+            ).fingerprint()
+            no_communication = PSRClosedLoopRunner(policy=ReplicaPolicy.NO_COMMUNICATION, config=config).run(instance)
+            one_shot = PSRClosedLoopRunner(policy=ReplicaPolicy.ONE_SHOT_DELTA, config=config).run(instance)
+            assert no_communication.completion_success_rate == .5
+            assert one_shot.completion_success_rate == 1.0
+            assert one_shot.critical_pair_count == 4
+
+
+def test_topology_variants_have_100_independent_physical_layouts() -> None:
     for topology in ("t_junction", "asymmetric_fork", "narrow_bypass"):
-        instance = generate_multifork_topology_variant_instance(topology=topology, seed=0)
-        assert instance.fingerprint() == generate_multifork_topology_variant_instance(topology=topology, seed=0).fingerprint()
-        no_communication = PSRClosedLoopRunner(policy=ReplicaPolicy.NO_COMMUNICATION, config=config).run(instance)
-        one_shot = PSRClosedLoopRunner(policy=ReplicaPolicy.ONE_SHOT_DELTA, config=config).run(instance)
-        assert no_communication.completion_success_rate == .5
-        assert one_shot.completion_success_rate == 1.0
+        instances = [generate_multifork_topology_variant_instance(
+            topology=topology, seed=seed, observation_radius=2,
+        ) for seed in range(100)]
+        assert len({instance.layout_fingerprint() for instance in instances}) == 100
 
 
 def test_cluttered_multifork_preserves_protected_routes_at_exact_density() -> None:
@@ -99,3 +113,21 @@ def test_tiled_cluttered_forks_scale_to_32_agents_with_exact_density() -> None:
     assert instance.num_agents == 32
     assert len(instance.starts) == 32
     assert instance.obstacle_density == round(.2 * 64 * 64) / (64 * 64)
+
+
+def test_cluttered_density_and_scale_studies_use_unique_physical_layouts() -> None:
+    for density in (.1, .2, .3, .4):
+        assert len({
+            generate_cluttered_multifork_instance(
+                seed=seed, obstacle_density=density, observation_radius=2,
+            ).layout_fingerprint()
+            for seed in range(100)
+        }) == 100
+    for agents, size in ((4, 24), (8, 32), (16, 48), (32, 64)):
+        assert len({
+            generate_tiled_cluttered_fork_instance(
+                seed=seed, obstacle_density=.2, map_size=size,
+                num_agents=agents, observation_radius=2,
+            ).layout_fingerprint()
+            for seed in range(100)
+        }) == 100

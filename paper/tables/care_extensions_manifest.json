@@ -1,0 +1,8 @@
+{
+  "complete": true,
+  "studies": 19,
+  "episodes": 12000,
+  "independent_maps_per_condition": 100,
+  "primary_fov": "5x5",
+  "confidence_interval": "20,000-draw map-cluster bootstrap; all comparisons paired by layout and loss trace"
+}

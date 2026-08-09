@@ -2,9 +2,19 @@
   "complete": true,
   "episodes": 9600,
   "independent_maps_per_condition": 100,
-  "unique_map_fingerprints": 100,
-  "planners": ["astar", "dstar_lite"],
-  "loss_probabilities": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5],
+  "unique_physical_layouts": 100,
+  "planners": [
+    "astar",
+    "dstar_lite"
+  ],
+  "loss_probabilities": [
+    0.0,
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5
+  ],
   "policies": [
     "one_shot_delta",
     "retry_all_arq",

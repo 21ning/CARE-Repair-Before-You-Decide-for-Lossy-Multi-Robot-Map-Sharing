@@ -126,8 +126,8 @@ def generate_multifork_topology_variant_instance(
     """
     if map_size != 32:
         raise ValueError("multifork topology variants require a 32x32 map")
-    if observation_radius != 3:
-        raise ValueError("multifork topology variants require observation_radius=3")
+    if observation_radius < 1:
+        raise ValueError("observation_radius must be positive")
     carvers = {
         "t_junction": _carve_t_junction,
         "asymmetric_fork": _carve_asymmetric_fork,
@@ -141,8 +141,12 @@ def generate_multifork_topology_variant_instance(
     obstacle_map = np.ones((map_size, map_size), dtype=np.uint8)
     starts: list[tuple[int, int]] = []
     goals: list[tuple[int, int]] = []
-    for row_offset, column_offset in ((0, 0), (0, 16), (16, 0), (16, 16)):
+    critical_pairs: list[str] = []
+    for pair, (row_offset, column_offset) in enumerate(((0, 0), (0, 16), (16, 0), (16, 16))):
         tile, observer_start, observer_goal, seeker_start, seeker_goal = carver(seed)
+        _open_isolated_background_pockets(
+            tile, seed=seed * 4 + pair, count=8,
+        )
         obstacle_map[row_offset:row_offset + 16, column_offset:column_offset + 16] = tile
         starts.extend((
             (row_offset + observer_start[0], column_offset + observer_start[1]),
@@ -152,12 +156,24 @@ def generate_multifork_topology_variant_instance(
             (row_offset + observer_goal[0], column_offset + observer_goal[1]),
             (row_offset + seeker_goal[0], column_offset + seeker_goal[1]),
         ))
+        if topology == "t_junction":
+            obstacle, commitment = (8, 12), (8, 8)
+        elif topology == "asymmetric_fork":
+            obstacle, commitment = (4, 9 + (seed % 2)), (8, 5)
+        else:
+            obstacle, commitment = (5, 9 + (seed % 2)), (8, 5)
+        critical_pairs.append(
+            f"{2 * pair},{2 * pair + 1},"
+            f"{row_offset + obstacle[0]},{column_offset + obstacle[1]},"
+            f"{row_offset + commitment[0]},{column_offset + commitment[1]}"
+        )
     return EpisodeInstance(
         obstacle_map=obstacle_map, starts=tuple(starts), goals=tuple(goals), generation_seed=seed,
         map_size=map_size, obstacle_density=float(obstacle_map.mean()), observation_radius=observation_radius,
         max_episode_steps=max_episode_steps, num_agents=8, collision_system="priority",
         package_metadata=MappingProxyType({
             "instance_family": f"multifork_{topology}", "geometry_version": "1", "pairs": "4",
+            "critical_decision_pairs": ";".join(critical_pairs),
         }),
     )
 
@@ -188,6 +204,7 @@ def generate_cluttered_multifork_instance(
     protected_free: set[tuple[int, int]] = set()
     starts: list[tuple[int, int]] = []
     goals: list[tuple[int, int]] = []
+    critical_pairs: list[str] = []
     slot_width = map_size // pairs
     for pair in range(pairs):
         left = pair * slot_width
@@ -199,6 +216,10 @@ def generate_cluttered_multifork_instance(
         observer_start = (barrier - 1, min(primary + 1, left + slot_width - 1))
         observer_goal = (barrier - 2, min(primary + 1, left + slot_width - 1))
         starts.extend((observer_start, start)); goals.extend((observer_goal, goal))
+        observer_id = 2 * pair
+        critical_pairs.append(
+            f"{observer_id},{observer_id + 1},{barrier},{primary},{branch},{primary}"
+        )
         # The alternate crossing and the two routes are never cluttered.
         protected_free.update((row, primary) for row in range(barrier + 1, barrier + 8))
         protected_free.update((branch, column) for column in range(min(primary, alternate), max(primary, alternate) + 1))
@@ -235,6 +256,7 @@ def generate_cluttered_multifork_instance(
         package_metadata=MappingProxyType({
             "instance_family": "multifork_cluttered", "geometry_version": "1", "pairs": str(pairs),
             "background_clutter_seed": str(seed), "target_obstacle_density": str(obstacle_density),
+            "critical_decision_pairs": ";".join(critical_pairs),
         }),
     )
 
@@ -326,6 +348,39 @@ def _carve_fork(obstacle_map: np.ndarray) -> None:
 
 def _empty_tile() -> np.ndarray:
     return np.ones((16, 16), dtype=np.uint8)
+
+
+def _open_isolated_background_pockets(
+    tile: np.ndarray, *, seed: int, count: int,
+) -> None:
+    """Add seeded map diversity without changing the decision-route graph."""
+    route = {tuple(map(int, cell)) for cell in np.argwhere(tile == 0)}
+    candidates = [
+        (row, column)
+        for row in range(1, tile.shape[0] - 1)
+        for column in range(1, tile.shape[1] - 1)
+        if int(tile[row, column]) == 1
+        and all(
+            (row + delta_row, column + delta_column) not in route
+            for delta_row, delta_column in ((0, 0), (-1, 0), (1, 0), (0, -1), (0, 1))
+        )
+    ]
+    rng = np.random.default_rng(seed)
+    selected: list[tuple[int, int]] = []
+    for candidate_index in rng.permutation(len(candidates)):
+        candidate = candidates[int(candidate_index)]
+        if any(
+            abs(candidate[0] - other[0]) + abs(candidate[1] - other[1]) <= 1
+            for other in selected
+        ):
+            continue
+        selected.append(candidate)
+        if len(selected) == count:
+            break
+    if len(selected) != count:
+        raise RuntimeError("could not place the requested isolated background pockets")
+    for cell in selected:
+        tile[cell] = 0
 
 
 def _carve_t_junction(seed: int) -> tuple[np.ndarray, tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int]]:

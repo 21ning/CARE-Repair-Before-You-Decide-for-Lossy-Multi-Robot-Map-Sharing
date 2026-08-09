@@ -5,7 +5,10 @@ from dataclasses import replace
 import pytest
 
 from cmvr.communication import CommunicationBudget, LinkConfig, MessageStatus, UnreliableNetwork
-from cmvr.env import PSRClosedLoopRunner, PSRConfig, ReplicaPolicy, generate_instance
+from cmvr.env import (
+    PSRClosedLoopRunner, PSRConfig, ReplicaPolicy,
+    generate_cluttered_multifork_instance, generate_instance,
+)
 from cmvr.env.psr_runner import _DeliveryTask
 from cmvr.mapping import BeliefMap, CellState, MapUpdate
 from cmvr.utils.config import ExperimentConfig
@@ -274,3 +277,22 @@ def test_certificate_repair_solves_bounded_scenario_problem() -> None:
     assert result.certificate_feasible_pairs > 0
     assert result.certificate_candidate_cells >= result.certificate_query_cells
     assert result.certificate_cpu_ms > 0
+    assert result.certificate_candidate_cap_checks == result.certificate_checks
+    assert 0.0 <= result.certificate_candidate_cap_hit_rate <= 1.0
+
+
+def test_critical_decision_timing_metrics_are_evaluation_only_and_auditable() -> None:
+    instance = generate_cluttered_multifork_instance(
+        seed=0, obstacle_density=.2, observation_radius=2,
+    )
+    result = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.CERTIFICATE_REPAIR,
+        config=replace(_config(loss=0.0), repair_interval_steps=1),
+    ).run(instance)
+    assert result.critical_pair_count == 4
+    assert result.critical_peer_observation_events == 4
+    assert result.critical_route_commitment_events == 4
+    assert result.mean_critical_peer_observation_step == 0.0
+    assert result.mean_route_commitment_step is not None
+    assert result.mean_usable_communication_window_steps is not None
+    assert result.certificate_candidate_cap_checks > 0

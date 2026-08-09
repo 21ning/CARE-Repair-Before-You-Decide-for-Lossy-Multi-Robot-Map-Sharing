@@ -1,0 +1,26 @@
+{
+  "complete": true,
+  "timing_fields_excluded": [
+    "certificate_cpu_ms",
+    "episode_cpu_ms",
+    "planning_cpu_ms",
+    "utility_trigger_cpu_ms"
+  ],
+  "comparisons": [
+    {
+      "study": "observation_radius_r2",
+      "matched_rows": 1600,
+      "non_timing_differences": 0
+    },
+    {
+      "study": "delay_zero",
+      "matched_rows": 800,
+      "non_timing_differences": 0
+    },
+    {
+      "study": "density_20",
+      "matched_rows": 1200,
+      "non_timing_differences": 0
+    }
+  ]
+}

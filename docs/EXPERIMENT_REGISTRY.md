@@ -1,22 +1,21 @@
-# CARE Experiment Registry
+# CARE experiment registry
 
-All completed studies use frozen, versioned implementations, 100 fully
-independent maps per policy-condition, one matched loss trace per map, and 32
-workers. The raw episode outputs are intentionally excluded from this compact
-submission repository; the final derived tables and figures are retained in
-`paper/`.
+All frozen studies use 100 physically distinct layouts per condition, matched
+loss traces, the binary codec and 32 workers. Raw episode files are excluded
+from the compact submission repository; audited tables, figures, configs and
+regeneration code are retained.
 
-| ID | Design | Policies | Status | Evidence retained in repository |
-| --- | --- | --- | --- | --- |
-| PSR-UT-formal-001 | 13 studies: loss, density, delay, cadence, scope, timing, and controls | One-shot, Retry-All, Path-Weighted ARQ, Mismatch Full Repair, PSR-UT; matched ablations | complete, 8,600 episodes | `paper/tables/psr_ut_primary_comparison.*`, `paper/figures/psr_ut_*` |
-| PSR-UT-periodic-001 | Primary decision geometry; K=4 periodic full anti-entropy | Periodic Full Sync | complete, 100 episodes | `paper/tables/psr_ut_primary_comparison.*` |
-| PSR-UT-action-001 | Utility trigger versus action-triggered repair | Action-triggered repair, PSR-UT | complete, 200 episodes | `paper/tables/psr_ut_ablation_extension_summary.md` |
-| PSR-UT-scale-001 | 4/8/16/32-agent tiled scale extension | four matched policies | complete, 1,600 episodes | `paper/tables/psr_ut_ablation_extension_summary.md` |
-| PSR-UT-topology-001 | T-junction, asymmetric-fork, narrow-bypass decision geometries | five primary policies | complete, 1,500 episodes | `paper/tables/psr_ut_ablation_extension_summary.md` |
-| PSR-UT-codec-audit-001 | Binary codec integration rerun on the paired action-trigger condition | Action-triggered repair, PSR-UT | complete, 200 episodes | `docs/WIRE_CODEC_AUDIT.md` |
-| CARE-deadline-planner-001 | 4 delays $\times$ 2 planners on the primary decision geometry | One-shot, Action-triggered, PSR-UT, CARE | complete, 3,200 episodes | `docs/CARE_GATE_RESULT.md`, `paper/tables/care_cross_planner_primary.*`, `paper/figures/care_cross_planner_delay.png` |
-| CARE-certificate-gate-001 | Exact scenario certificate and positive-delay dual-certificate promotion gate | One-shot, PSR-UT, CARE-Lite, CARE | complete, 3,200 episodes | `docs/CARE_ALGORITHM.md`, `docs/CARE_FINAL_RESULTS.md` |
-| CARE-loss-baselines-001 | 6 loss rates $\times$ 8 policies $\times$ A*/D* Lite | One-shot, Retry-All, Path-Weighted, Periodic Full, Mismatch Full, PSR-UT, CARE-Lite, CARE | complete, 9,600 episodes / 100 unique fingerprints | `paper/tables/care_loss_baselines_manifest.json`, `care_loss_baselines_primary.*`, `care_loss_baselines_paired.*`, `paper/figures/care_loss_baseline_sweep.*` |
+| ID | Design | Episodes | Status | Retained evidence |
+| --- | --- | ---: | --- | --- |
+| CARE-main-5x5 | 6 losses × 8 policies × A*/D* | 9,600 | complete | `care_loss_baselines_*`, loss figure |
+| CARE-FOV | 3×3/5×5/7×7 × 10 policies × A*/D* | 6,000 | complete | `care_fov_*`, FOV figure |
+| CARE-delay | delays 0/1/2/4 × 4 policies × A*/D* | 3,200 | complete | cross-planner table and delay figure |
+| CARE-density | 4 structured densities × 6 policies × A*/D* | 4,800 | complete | `care_extensions.*` |
+| CARE-random-negative | 4 random densities × 3 policies | 1,200 | complete | `care_extensions.*` |
+| CARE-certificate-ablation | cadence plus q/cap variants × A*/D* | 800 | complete | `care_full_method_ablations.*` |
+| CARE-topology | 3 topologies × 6 policies × A*/D* | 3,600 | complete | `care_extensions.*` |
+| CARE-scale | 4/8/16/32 agents × 4 policies | 1,600 | complete | `care_extensions.*` |
 
-The obsolete Conditional-CMVR/Oracle direction, preliminary PSR variants,
-EPOM training artifacts, and their results are not part of this submission.
+The overlapping primary conditions were launched independently in four studies.
+`care_cross_study_reproducibility.json` verifies 1,600 FOV, 800 delay and
+1,200 density rows against the main run with zero non-timing differences.

@@ -9,7 +9,7 @@ The earlier fixed-corridor PSR-UT and rule-based CARE-Lite remain matched
 ablations.
 
 The final method is the `certificate_repair` policy in code and is labeled
-`CARE-DC` in generated tables when it must be distinguished from CARE-Lite.
+`CARE` in generated tables; `deadline_aware_repair` is the CARE-Lite ablation.
 
 ![CARE running in POGEMA](assets/pogema_demo.gif)
 
@@ -36,9 +36,11 @@ CARE turns those two observations into an executable communication objective
 rather than a fixed retry schedule. The environment and robot motion are provided by
 [POGEMA](https://github.com/AIRI-Institute/pogema). All methods use the same
 map representation, packet-loss trace, delay model, and byte accounting within
-each matched condition. The formal planner-independence check repeats the
-matrix with A* and incremental D* Lite. There are no learned policies or model
-checkpoints in this repository.
+each matched condition. The primary sensor footprint is 5×5. Matched 3×3 and
+7×7 extensions expose where partial observability, rather than packet
+recovery, becomes the limiting factor. The formal planner-independence check
+repeats the matrix with A* and incremental D* Lite. There are no learned
+policies or model checkpoints in this repository.
 
 ## How it works
 
@@ -63,12 +65,13 @@ blocked candidates produce at most 37 scenarios and 256 possible query
 subsets. The exact scenario-separation theorem, complexity and guarantee
 boundary are given in [docs/CARE_ALGORITHM.md](docs/CARE_ALGORITHM.md).
 
-With 100 independent maps, 30% loss, and zero delay, CARE reaches 0.9375 CSR
-with A* and 0.9413 with D* Lite, versus 0.8400/0.8462 for One-shot. It uses
-about 67.7 KB per episode, roughly 8 KB less than fixed-corridor PSR-UT at
-statistically equivalent reliability. See
+With 100 physically distinct maps, 5×5 sensing, 30% loss, and zero delay,
+CARE reaches 0.7362 CSR with A* and 0.7688 with D* Lite, versus
+0.6713/0.6900 for One-shot. It uses about 53.25 KB per episode: roughly
+5.5 KB above One-shot, 9.5 KB below fixed-corridor PSR-UT, and 101 KB below
+Retry-All ARQ. See
 [docs/CARE_FINAL_RESULTS.md](docs/CARE_FINAL_RESULTS.md) for all baselines,
-loss rates, paired confidence intervals and the honest high-loss boundary.
+loss rates, paired confidence intervals, sensor-range limits and compute cost.
 
 The implementation separates mapping, communication, planning, and environment
 execution so that the protocol can be inspected or replaced independently.
@@ -146,7 +149,7 @@ be empty so results from separate runs cannot be mixed accidentally.
 
 ```bash
 python scripts/run_psr_suite.py \
-  --config configs/care_dual_certificate_loss_baselines_100map.yaml \
+  --config configs/care_main_loss_100map.yaml \
   --output-directory /tmp/care-demo \
   --workers 32
 ```

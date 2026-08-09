@@ -22,7 +22,7 @@ from cmvr.communication import (
     scenario_blocked_sets, update_from_belief,
     update_stamp,
 )
-from cmvr.env.instance import EpisodeInstance
+from cmvr.env.instance import EpisodeInstance, critical_decision_pairs
 from cmvr.mapping import BeliefMap, DeltaEncoder, MapUpdate, PlanningMapAdapter
 from cmvr.planning import Coordinate, Planner, make_planner
 from cmvr.utils.seeding import seed_everything
@@ -84,6 +84,20 @@ class PSRResult:
     certificate_infeasible_pairs: int
     certificate_candidate_cells: int
     certificate_query_cells: int
+    certificate_candidate_cap_checks: int
+    certificate_candidate_cap_hits: int
+    certificate_candidate_cap_hit_rate: float
+    mean_uncapped_certificate_candidates: float
+    critical_pair_count: int
+    critical_peer_observation_events: int
+    critical_self_observation_events: int
+    critical_route_commitment_events: int
+    mean_critical_peer_observation_step: float | None
+    mean_critical_self_observation_step: float | None
+    mean_route_commitment_step: float | None
+    mean_visibility_gap_steps: float | None
+    mean_usable_communication_window_steps: float | None
+    decision_before_self_observation_rate: float | None
     planning_cpu_ms: float = field(compare=False)
     utility_trigger_cpu_ms: float = field(compare=False)
     certificate_cpu_ms: float = field(compare=False)
@@ -153,6 +167,8 @@ class PSRClosedLoopRunner:
         self._certificate_conflicting_pairs = self._certificate_feasible_pairs = 0
         self._certificate_infeasible_pairs = self._certificate_candidate_cells = 0
         self._certificate_query_cells = 0
+        self._certificate_candidate_cap_checks = self._certificate_candidate_cap_hits = 0
+        self._certificate_uncapped_candidate_cells = 0
         self._planning_cpu_seconds = self._utility_trigger_cpu_seconds = 0.0
         self._certificate_cpu_seconds = 0.0
 
@@ -177,6 +193,8 @@ class PSRClosedLoopRunner:
         self._certificate_conflicting_pairs = self._certificate_feasible_pairs = 0
         self._certificate_infeasible_pairs = self._certificate_candidate_cells = 0
         self._certificate_query_cells = 0
+        self._certificate_candidate_cap_checks = self._certificate_candidate_cap_hits = 0
+        self._certificate_uncapped_candidate_cells = 0
         self._planning_cpu_seconds = 0.0
         self._utility_trigger_cpu_seconds = 0.0
         self._certificate_cpu_seconds = 0.0
@@ -200,12 +218,25 @@ class PSRClosedLoopRunner:
         traces: list[ReplicaStep] = []
         action_trace: list[tuple[int, ...]] = []
         repair_events = 0
+        critical_pairs = critical_decision_pairs(instance)
+        peer_observation_steps: list[int | None] = [None] * len(critical_pairs)
+        self_observation_steps: list[int | None] = [None] * len(critical_pairs)
+        route_commitment_steps: list[int | None] = [None] * len(critical_pairs)
 
         for step in range(instance.max_episode_steps):
             data_budget = [CommunicationBudget(self.config.data_bytes_per_agent_per_step) for _ in beliefs]
             control_budget = [CommunicationBudget(self.config.control_bytes_per_agent_per_step) for _ in beliefs]
             repair_events += self._drain_arrivals(network, step, beliefs, outboxes, full_repair_outboxes, data_budget, control_budget)
             positions = self._positions(environment)
+            for pair_index, pair in enumerate(critical_pairs):
+                if peer_observation_steps[pair_index] is None and self._sensor_contains(
+                    positions[pair.observer_id], pair.obstacle, instance.observation_radius,
+                ):
+                    peer_observation_steps[pair_index] = step
+                if self_observation_steps[pair_index] is None and self._sensor_contains(
+                    positions[pair.seeker_id], pair.obstacle, instance.observation_radius,
+                ):
+                    self_observation_steps[pair_index] = step
             local_updates = []
             for sender_id, observation in enumerate(observations):
                 updates = self.encoder.observe(beliefs[sender_id], observation[0], positions[sender_id], sender_id=sender_id, step=step)
@@ -227,6 +258,13 @@ class PSRClosedLoopRunner:
                     active_repair_start[agent] = None
             traces.append(ReplicaStep(step, replica_error, float(np.mean(repairable)), path_truth_error, repair_events, len(local_updates)))
             actions = tuple(0 if completed[index] else self._action(paths[index], positions[index]) for index in range(instance.num_agents))
+            for pair_index, pair in enumerate(critical_pairs):
+                if (
+                    route_commitment_steps[pair_index] is None
+                    and positions[pair.seeker_id] == pair.commitment
+                    and actions[pair.seeker_id] != 0
+                ):
+                    route_commitment_steps[pair_index] = step
             action_trace.append(actions)
             observations, _, _, _ = environment.step(actions)
             latest = self._positions(environment)
@@ -236,6 +274,24 @@ class PSRClosedLoopRunner:
                 break
 
         unresolved = sum(start is not None for start in active_repair_start)
+        observed_peer = [value for value in peer_observation_steps if value is not None]
+        observed_self = [value for value in self_observation_steps if value is not None]
+        commitments = [value for value in route_commitment_steps if value is not None]
+        visibility_gaps = [
+            self_step - peer_step
+            for peer_step, self_step in zip(peer_observation_steps, self_observation_steps)
+            if peer_step is not None and self_step is not None
+        ]
+        usable_windows = [
+            commitment - peer_step - 2 * self.config.link.delay_steps
+            for peer_step, commitment in zip(peer_observation_steps, route_commitment_steps)
+            if peer_step is not None and commitment is not None
+        ]
+        decision_before_self = [
+            float(commitment < self_step)
+            for commitment, self_step in zip(route_commitment_steps, self_observation_steps)
+            if commitment is not None and self_step is not None
+        ]
         return PSRResult(
             self.policy.value, self.planner_name, len(traces), tuple(completed), tuple(action_trace), tuple(traces), network.summary(),
             float(np.mean([trace.replica_error for trace in traces])) if traces else 0.0,
@@ -254,6 +310,23 @@ class PSRClosedLoopRunner:
             self._certificate_conflicting_pairs, self._certificate_feasible_pairs,
             self._certificate_infeasible_pairs, self._certificate_candidate_cells,
             self._certificate_query_cells,
+            self._certificate_candidate_cap_checks,
+            self._certificate_candidate_cap_hits,
+            (
+                self._certificate_candidate_cap_hits / self._certificate_candidate_cap_checks
+                if self._certificate_candidate_cap_checks else 0.0
+            ),
+            (
+                self._certificate_uncapped_candidate_cells / self._certificate_candidate_cap_checks
+                if self._certificate_candidate_cap_checks else 0.0
+            ),
+            len(critical_pairs), len(observed_peer), len(observed_self), len(commitments),
+            float(np.mean(observed_peer)) if observed_peer else None,
+            float(np.mean(observed_self)) if observed_self else None,
+            float(np.mean(commitments)) if commitments else None,
+            float(np.mean(visibility_gaps)) if visibility_gaps else None,
+            float(np.mean(usable_windows)) if usable_windows else None,
+            float(np.mean(decision_before_self)) if decision_before_self else None,
             self._planning_cpu_seconds * 1_000,
             self._utility_trigger_cpu_seconds * 1_000,
             self._certificate_cpu_seconds * 1_000,
@@ -677,11 +750,16 @@ class PSRClosedLoopRunner:
         """Solve the bounded scenario-separation certificate exactly."""
         self._certificate_checks += 1
         started = process_time()
-        candidates = decision_candidate_cells(
+        uncapped_candidates = decision_candidate_cells(
             belief, optimistic_path,
             max_horizon=self.config.corridor_horizon,
-            max_candidates=self.config.certificate_max_cells,
+            max_candidates=None,
         )
+        self._certificate_candidate_cap_checks += 1
+        self._certificate_uncapped_candidate_cells += len(uncapped_candidates)
+        if len(uncapped_candidates) > self.config.certificate_max_cells:
+            self._certificate_candidate_cap_hits += 1
+        candidates = uncapped_candidates[:self.config.certificate_max_cells]
         blocked_sets = scenario_blocked_sets(
             candidates,
             uncertainty_order=self.config.certificate_uncertainty_order,
@@ -732,6 +810,11 @@ class PSRClosedLoopRunner:
         self._certificate_candidate_cells += len(certificate.candidate_cells)
         self._certificate_query_cells += len(certificate.cells)
         return certificate
+
+    @staticmethod
+    def _sensor_contains(position: Coordinate, cell: Coordinate, radius: int) -> bool:
+        """POGEMA square-footprint visibility used only for evaluation timing."""
+        return max(abs(position[0] - cell[0]), abs(position[1] - cell[1])) <= radius
 
     @staticmethod
     def _action(path: tuple[Coordinate, ...], position: Coordinate) -> int:

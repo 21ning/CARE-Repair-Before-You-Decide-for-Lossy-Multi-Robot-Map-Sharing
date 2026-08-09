@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from cmvr.communication import (
-    deadline_decision_repair_plan, first_path_divergence, full_replica_chunk,
+    deadline_decision_repair_plan, decision_candidate_cells, first_path_divergence, full_replica_chunk,
     minimum_scenario_certificate, ordered_digest_peers, planning_corridor,
     replica_digest, scenario_blocked_sets,
 )
@@ -83,6 +83,19 @@ def test_q_sparse_scenario_family_has_declared_bounded_size() -> None:
     assert len(scenarios) == 1 + 8 + 28
     assert scenarios[0] == frozenset()
     assert all(len(scenario) <= 2 for scenario in scenarios)
+
+
+def test_candidate_cap_can_be_audited_against_the_uncapped_set() -> None:
+    belief = BeliefMap((9, 9))
+    path = tuple((4, column) for column in range(1, 8))
+    uncapped = decision_candidate_cells(
+        belief, path, max_horizon=6, max_candidates=None,
+    )
+    capped = decision_candidate_cells(
+        belief, path, max_horizon=6, max_candidates=4,
+    )
+    assert len(uncapped) > 4
+    assert capped == uncapped[:4]
 
 
 def test_scenario_certificate_tie_break_is_deterministic() -> None:

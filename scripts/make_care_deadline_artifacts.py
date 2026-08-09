@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create the CARE-Lite cross-planner paper table and delay figure."""
+"""Create the final CARE cross-planner table and delay figure."""
 
 from __future__ import annotations
 
@@ -14,11 +14,13 @@ LABELS = {
     "one_shot_delta": "One-shot",
     "utility_triggered_repair": "PSR-UT",
     "deadline_aware_repair": "CARE-Lite",
+    "certificate_repair": "CARE",
 }
 COLORS = {
     "one_shot_delta": "#777777",
     "utility_triggered_repair": "#D55E00",
     "deadline_aware_repair": "#0072B2",
+    "certificate_repair": "#009E73",
 }
 
 
@@ -30,6 +32,9 @@ def main() -> None:
     args = parser.parse_args()
     args.table_directory.mkdir(parents=True, exist_ok=True)
     args.figure_directory.mkdir(parents=True, exist_ok=True)
+    (args.table_directory / "care_delay_gate.json").write_text(
+        (args.analysis_directory / "gate_decision.json").read_text()
+    )
 
     rows = list(csv.DictReader((args.analysis_directory / "summary_mean_std_ci.csv").open()))
     lookup = {
@@ -56,7 +61,7 @@ def main() -> None:
         writer.writeheader(); writer.writerows(output)
 
     lines = [
-        "# CARE-Lite cross-planner primary result", "",
+        "# CARE cross-planner primary result", "",
         "100 independent maps; 30% loss; zero link delay. CIs bootstrap independent maps.", "",
         "| Planner | Method | CSR mean ± SD [95% CI] | Attempted KB mean ± SD | Planning CPU ms |",
         "|---|---|---:|---:|---:|",

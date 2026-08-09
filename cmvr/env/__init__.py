@@ -1,6 +1,9 @@
 """Instance generation and closed-loop execution for PSR-UT."""
 
-from .instance import EpisodeInstance, generate_instance, load_instance, save_instance
+from .instance import (
+    CriticalDecisionPair, EpisodeInstance, critical_decision_pairs,
+    generate_instance, load_instance, save_instance,
+)
 from cmvr.communication import PSRConfig, ReplicaPolicy
 from .psr_runner import PSRClosedLoopRunner, PSRResult
 from .structured_instances import (
@@ -11,6 +14,8 @@ from .structured_instances import (
 
 __all__ = [
     "EpisodeInstance",
+    "CriticalDecisionPair",
+    "critical_decision_pairs",
     "PSRClosedLoopRunner",
     "PSRConfig",
     "PSRResult",
