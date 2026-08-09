@@ -1,10 +1,11 @@
 # CARE: Repair Before You Decide
 
 CARE is a compact research implementation for reliable occupancy-map sharing
-between multiple robots over lossy links. Its main protocol, **Path-Scoped
-Utility-Triggered repair (PSR-UT)**, keeps an explicit versioned map replica at
-each robot and repairs missing cells only when they can affect an imminent
-planning decision.
+between multiple robots over lossy links. Its main protocol,
+**Commitment-Aware Replica rEpair (CARE)**, keeps an explicit versioned map replica at
+each robot and minimizes encoded repair traffic subject to a locally derived
+route-commitment deadline. The earlier fixed-corridor PSR-UT remains as a
+matched ablation.
 
 ![CARE running in POGEMA](assets/pogema_demo.gif)
 
@@ -25,11 +26,15 @@ remain easy to follow; they are not part of Robot 1's occupancy-map knowledge.
 The episode uses eight agents, 30% packet loss, and start-to-goal distances of
 14--48 cells, so no robot begins at or immediately beside its goal.
 
-The environment and robot motion are provided by
+The motivation is simple: a stale map cell is harmful only if it can change a
+decision, and a repair is useful only if it arrives before the robot commits.
+CARE turns those two observations into an executable communication objective
+rather than a fixed retry schedule. The environment and robot motion are provided by
 [POGEMA](https://github.com/AIRI-Institute/pogema). All methods use the same
-fixed A* planner, map representation, packet-loss trace, delay model, and byte
-accounting. There are no learned policies or model checkpoints in this
-repository.
+map representation, packet-loss trace, delay model, and byte accounting within
+each matched condition. The formal planner-independence check repeats the
+matrix with A* and incremental D* Lite. There are no learned policies or model
+checkpoints in this repository.
 
 ## How it works
 
@@ -39,10 +44,21 @@ At every environment step:
    updates;
 2. updates are sent through a deterministic directed loss/delay channel;
 3. each receiver plans on its own local map replica;
-4. PSR-UT compares the receiver's optimistic and pessimistic next actions;
-5. if those actions disagree, the receiver queries a short corridor around its
-   imminent route and receives only newer cells from a peer;
-6. POGEMA executes the selected actions and the process repeats.
+4. CARE compares optimistic and pessimistic receiver-local paths to detect a
+   decision ambiguity;
+5. the first unknown cell on the operational path gives the latest safe repair
+   time, which is checked against the query--patch round trip;
+6. CARE queries only unknown cells in the one-hop action-graph influence set
+   between path divergence and reconvergence;
+7. the peer returns only newer stamped cells, after which POGEMA executes the
+   selected actions.
+
+With 100 independent maps, 30% loss, and zero delay, CARE reaches 0.9375 CSR
+with A* and 0.9400 with D* Lite, versus 0.8400/0.8462 for One-shot. It uses
+about 68.6 KB per episode, roughly 7 KB less than fixed-corridor PSR-UT at
+statistically equivalent reliability. See
+[docs/CARE_GATE_RESULT.md](docs/CARE_GATE_RESULT.md) for the paired confidence
+intervals and deadline diagnostics.
 
 The implementation separates mapping, communication, planning, and environment
 execution so that the protocol can be inspected or replaced independently.
@@ -73,7 +89,7 @@ contract.
 cmvr/
   mapping/          Versioned occupancy maps and sparse update encoding
   communication/    Lossy transport, byte budgets, digests, and repair policies
-  planning/         Deterministic A* and belief-map adapters
+  planning/         Deterministic A*, incremental D* Lite, and planner contract
   env/              POGEMA instances and the closed-loop protocol runner
 configs/            Reproducible experiment configurations
 scripts/            Experiment, analysis, and visualization entry points
@@ -90,7 +106,7 @@ EpisodeInstance
     -> PSRClosedLoopRunner
        -> BeliefMap + DeltaEncoder
        -> UnreliableNetwork + ReplicaPolicy
-       -> PlanningMapAdapter + AStarPlanner
+       -> PlanningMapAdapter + selected Planner
     -> PSRResult
 ```
 
@@ -120,9 +136,9 @@ be empty so results from separate runs cannot be mixed accidentally.
 
 ```bash
 python scripts/run_psr_suite.py \
-  --config configs/psr_periodic_full_primary_100map.yaml \
+  --config configs/care_deadline_cross_planner_100map.yaml \
   --output-directory /tmp/care-demo \
-  --workers 8
+  --workers 32
 ```
 
 The runner writes:
@@ -135,13 +151,11 @@ The runner writes:
   summary.json      Configuration and run metadata
 ```
 
-To run and analyze the complete configured matrix:
+To analyze the CARE cross-planner matrix:
 
 ```bash
-python scripts/run_psr_100map_matrix.py \
-  --workers 32 --output-directory /tmp/care-formal
-python scripts/analyze_psr_100map_matrix.py \
-  --input-directory /tmp/care-formal \
+python scripts/analyze_care_deadline_cross_planner.py \
+  --input-directory /tmp/care-demo \
   --output-directory /tmp/care-analysis
 ```
 
@@ -150,7 +164,7 @@ are documented in [docs/REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md).
 
 ## Generate the POGEMA demo
 
-The README animation runs one deterministic PSR-UT episode and replays its
+The README animation runs one deterministic deadline-aware CARE episode and replays its
 recorded actions in POGEMA using the visualization semantics described above.
 
 ```bash

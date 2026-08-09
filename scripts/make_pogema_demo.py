@@ -61,7 +61,7 @@ def run_episode():
         ))
 
     result = PSRClosedLoopRunner(
-        policy=ReplicaPolicy.UTILITY_TRIGGERED_REPAIR,
+        policy=ReplicaPolicy.DEADLINE_AWARE_REPAIR,
         config=config,
         step_observer=record_replica,
     ).run(instance)
@@ -110,7 +110,7 @@ def render_frame(
     remote = known & (source_ids != 0)
     coverage = 100.0 * float(known.mean())
     remote_share = 100.0 * float(remote.sum()) / max(1, int(known.sum()))
-    draw.text((margin, 10), "CARE / PSR-UT  |  POGEMA  |  30% packet loss", fill="#172033", font=font)
+    draw.text((margin, 10), "CARE  |  POGEMA  |  30% packet loss", fill="#172033", font=font)
     draw.text((margin, 28), "Robot 1 local map replica (not ground truth)", fill="#172033", font=font)
     draw.text(
         (margin, 46),

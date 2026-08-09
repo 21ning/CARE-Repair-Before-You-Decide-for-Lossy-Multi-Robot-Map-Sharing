@@ -12,6 +12,26 @@ and deterministic loss trace within each map. All confidence intervals are
 deterministic 20,000-draw bootstraps over maps; standard deviations use all
 100 trial-level observations. Runners reject nonempty output directories.
 
+## CARE deadline and cross-planner gate
+
+This is the current main-method matrix: 100 independent maps crossed with two
+planners, four delays, and four policies (3,200 complete episodes).
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python scripts/run_psr_suite.py \
+  --config configs/care_deadline_cross_planner_100map.yaml \
+  --output-directory /tmp/care-cross-planner --workers 32
+PYTHONDONTWRITEBYTECODE=1 python scripts/analyze_care_deadline_cross_planner.py \
+  --input-directory /tmp/care-cross-planner \
+  --output-directory /tmp/care-cross-planner-analysis
+PYTHONDONTWRITEBYTECODE=1 python scripts/make_care_deadline_artifacts.py \
+  --analysis-directory /tmp/care-cross-planner-analysis
+```
+
+The suite writes `planner` into every episode and trace row. The analysis
+refuses incomplete or duplicate conditions and requires exactly 100 matched
+layout/network keys for every planner--delay--policy cell.
+
 ## Formal matrix and scale extension
 
 ```bash

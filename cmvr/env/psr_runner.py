@@ -10,10 +10,11 @@ import numpy as np
 from pogema import GridConfig, pogema_v0
 
 from cmvr.communication import (
-    ACK_BYTES, DIGEST_ENTRY_BYTES, DIGEST_HEADER_BYTES,
+    ACK_BYTES, DIGEST_ENTRY_BYTES, DIGEST_HEADER_BYTES, DecisionRepairPlan,
     PATCH_HEADER_BYTES, REPLICA_DIGEST_BYTES, CommunicationBudget, DeltaPayload,
     DigestQuery, MessageKind, NetworkMessage, PSRConfig, PatchPayload,
     ReplicaPolicy, UnreliableNetwork, ack_token, belief_stamp, decode_ack,
+    deadline_decision_repair_plan,
     decode_delta, decode_digest_query, decode_patch, decode_replica_digest,
     encode_ack, encode_delta, encode_digest_query, encode_patch,
     encode_replica_digest, full_replica_chunk, ordered_digest_peers,
@@ -22,7 +23,7 @@ from cmvr.communication import (
 )
 from cmvr.env.instance import EpisodeInstance
 from cmvr.mapping import BeliefMap, DeltaEncoder, MapUpdate, PlanningMapAdapter
-from cmvr.planning import AStarPlanner, Coordinate
+from cmvr.planning import Coordinate, Planner, make_planner
 from cmvr.utils.seeding import seed_everything
 
 
@@ -52,6 +53,7 @@ class ReplicaStep:
 @dataclass(frozen=True)
 class PSRResult:
     policy: str
+    planner: str
     episode_length: int
     completed: tuple[bool, ...]
     action_trace: tuple[tuple[int, ...], ...]
@@ -68,6 +70,12 @@ class PSRResult:
     utility_trigger_checks: int
     utility_triggered_receivers: int
     corridor_query_receivers: int
+    deadline_trigger_checks: int
+    deadline_ambiguous_receivers: int
+    deadline_feasible_receivers: int
+    deadline_infeasible_receivers: int
+    deadline_query_cells: int
+    mean_decision_slack: float | None
     planning_cpu_ms: float = field(compare=False)
     utility_trigger_cpu_ms: float = field(compare=False)
     episode_cpu_ms: float = field(compare=False)
@@ -97,6 +105,7 @@ class PSRClosedLoopRunner:
 
     def __init__(
         self, *, policy: ReplicaPolicy, config: PSRConfig,
+        planner: str = "astar",
         step_observer: Callable[
             [int, tuple[BeliefMap, ...], tuple[Coordinate, ...]], None
         ] | None = None,
@@ -117,13 +126,20 @@ class PSRClosedLoopRunner:
                 f"configured={configured_wire_sizes}, expected={expected_wire_sizes}"
             )
         self.step_observer = step_observer
+        self.planner_name = planner
         self.adapter = PlanningMapAdapter("optimistic")
         self.pessimistic_adapter = PlanningMapAdapter("pessimistic")
-        self.planner = AStarPlanner()
+        self.planner = make_planner(planner)
+        self._optimistic_planners: list[Planner] = []
+        self._pessimistic_planners: list[Planner] = []
         self.encoder = DeltaEncoder()
         self._optimistic_planning_calls = self._pessimistic_planning_calls = 0
         self._utility_trigger_checks = self._utility_triggered_receivers = 0
         self._corridor_query_receivers = 0
+        self._deadline_trigger_checks = self._deadline_ambiguous_receivers = 0
+        self._deadline_feasible_receivers = self._deadline_infeasible_receivers = 0
+        self._deadline_query_cells = 0
+        self._decision_slacks: list[int] = []
         self._planning_cpu_seconds = self._utility_trigger_cpu_seconds = 0.0
 
     def run(self, instance: EpisodeInstance) -> PSRResult:
@@ -139,6 +155,10 @@ class PSRClosedLoopRunner:
         self._utility_trigger_checks = 0
         self._utility_triggered_receivers = 0
         self._corridor_query_receivers = 0
+        self._deadline_trigger_checks = self._deadline_ambiguous_receivers = 0
+        self._deadline_feasible_receivers = self._deadline_infeasible_receivers = 0
+        self._deadline_query_cells = 0
+        self._decision_slacks = []
         self._planning_cpu_seconds = 0.0
         self._utility_trigger_cpu_seconds = 0.0
         seed_everything(instance.generation_seed)
@@ -150,6 +170,8 @@ class PSRClosedLoopRunner:
         ))
         observations = environment.reset()
         beliefs = tuple(BeliefMap(instance.obstacle_map.shape) for _ in range(instance.num_agents))
+        self._optimistic_planners = [make_planner(self.planner_name) for _ in beliefs]
+        self._pessimistic_planners = [make_planner(self.planner_name) for _ in beliefs]
         network = UnreliableNetwork(self.config.link)
         outboxes: list[dict[tuple[str, int], _DeliveryTask]] = [dict() for _ in range(instance.num_agents)]
         full_repair_outboxes: list[dict[tuple[str, int], _DeliveryTask]] = [dict() for _ in range(instance.num_agents)]
@@ -196,7 +218,7 @@ class PSRClosedLoopRunner:
 
         unresolved = sum(start is not None for start in active_repair_start)
         return PSRResult(
-            self.policy.value, len(traces), tuple(completed), tuple(action_trace), tuple(traces), network.summary(),
+            self.policy.value, self.planner_name, len(traces), tuple(completed), tuple(action_trace), tuple(traces), network.summary(),
             float(np.mean([trace.replica_error for trace in traces])) if traces else 0.0,
             float(np.mean([trace.path_repairable_error for trace in traces])) if traces else 0.0,
             float(np.mean([trace.path_truth_error for trace in traces])) if traces else 0.0,
@@ -205,6 +227,10 @@ class PSRClosedLoopRunner:
             self._optimistic_planning_calls, self._pessimistic_planning_calls,
             self._utility_trigger_checks, self._utility_triggered_receivers,
             self._corridor_query_receivers,
+            self._deadline_trigger_checks, self._deadline_ambiguous_receivers,
+            self._deadline_feasible_receivers, self._deadline_infeasible_receivers,
+            self._deadline_query_cells,
+            float(np.mean(self._decision_slacks)) if self._decision_slacks else None,
             self._planning_cpu_seconds * 1_000,
             self._utility_trigger_cpu_seconds * 1_000,
             (process_time() - episode_start) * 1_000,
@@ -230,6 +256,7 @@ class PSRClosedLoopRunner:
             ReplicaPolicy.PATH_WEIGHTED_ARQ, ReplicaPolicy.MISMATCH_TRIGGERED_FULL_REPAIR,
             ReplicaPolicy.ACTION_TRIGGERED_REPAIR,
             ReplicaPolicy.UTILITY_TRIGGERED_REPAIR,
+            ReplicaPolicy.DEADLINE_AWARE_REPAIR,
         } or (self.policy is ReplicaPolicy.PERIODIC_FULL_SYNC and not is_periodic_sync_step):
             self._send_delta_tasks(network, step, outboxes, data_budget, paths)
         if is_periodic_sync_step:
@@ -240,6 +267,8 @@ class PSRClosedLoopRunner:
             self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, action_only=True)
         if self.policy is ReplicaPolicy.UTILITY_TRIGGERED_REPAIR and step % self.config.repair_interval_steps == 0:
             self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, utility_triggered=True, goals=goals)
+        if self.policy is ReplicaPolicy.DEADLINE_AWARE_REPAIR and step % self.config.repair_interval_steps == 0:
+            self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, deadline_aware=True, goals=goals)
         if self.policy is ReplicaPolicy.FULL_REPLICA_REPAIR and step % self.config.repair_interval_steps == 0:
             self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, full_replica=True)
         if self.policy is ReplicaPolicy.MISMATCH_TRIGGERED_FULL_REPAIR and step % self.config.repair_interval_steps == 0:
@@ -290,6 +319,7 @@ class PSRClosedLoopRunner:
                     ReplicaPolicy.PERIODIC_FULL_SYNC,
                     ReplicaPolicy.FULL_REPLICA_REPAIR, ReplicaPolicy.MISMATCH_TRIGGERED_FULL_REPAIR,
                     ReplicaPolicy.ACTION_TRIGGERED_REPAIR, ReplicaPolicy.UTILITY_TRIGGERED_REPAIR,
+                    ReplicaPolicy.DEADLINE_AWARE_REPAIR,
                 }:
                     outbox.pop(key, None)
 
@@ -368,18 +398,33 @@ class PSRClosedLoopRunner:
         control_budget: list[CommunicationBudget], paths: tuple[tuple[Coordinate, ...], ...],
         positions: tuple[Coordinate, ...], *, regional_only: bool, full_replica: bool = False,
         action_only: bool = False, utility_triggered: bool = False,
+        deadline_aware: bool = False,
         goals: tuple[Coordinate, ...] | None = None,
     ) -> None:
         for requester_id, path in enumerate(paths):
             if utility_triggered and (goals is None or not self._action_is_utility_sensitive(
                 beliefs[requester_id], positions[requester_id], goals[requester_id], path,
+                requester_id=requester_id,
             )):
                 continue
             if utility_triggered:
                 self._utility_triggered_receivers += 1
+            deadline_plan = None
+            if deadline_aware:
+                if goals is None:
+                    raise ValueError("deadline-aware repair requires receiver goals")
+                deadline_plan = self._deadline_plan(
+                    beliefs[requester_id], positions[requester_id],
+                    goals[requester_id], path, requester_id,
+                )
+                if not deadline_plan.cells:
+                    continue
             if not regional_only and not full_replica:
                 self._corridor_query_receivers += 1
-            cells = self._query_cells(path, beliefs[requester_id].shape, step, full_replica=full_replica, action_only=action_only)
+            cells = deadline_plan.cells if deadline_plan is not None else self._query_cells(
+                path, beliefs[requester_id].shape, step,
+                full_replica=full_replica, action_only=action_only,
+            )
             if not cells:
                 continue
             payload = DigestQuery(cells, tuple(belief_stamp(beliefs[requester_id], cell) for cell in cells), regional_only, action_only)
@@ -520,13 +565,15 @@ class PSRClosedLoopRunner:
 
     def _paths(self, beliefs: tuple[BeliefMap, ...], positions: tuple[Coordinate, ...], goals: tuple[Coordinate, ...]) -> tuple[tuple[Coordinate, ...], ...]:
         started = process_time()
-        paths = tuple(self.planner.plan(self.adapter.to_planning_map(belief), positions[index], goals[index]).path for index, belief in enumerate(beliefs))
+        planners = self._optimistic_planners or [self.planner] * len(beliefs)
+        paths = tuple(planners[index].plan(self.adapter.to_planning_map(belief), positions[index], goals[index]).path for index, belief in enumerate(beliefs))
         self._optimistic_planning_calls += len(beliefs)
         self._planning_cpu_seconds += process_time() - started
         return paths
 
     def _action_is_utility_sensitive(
         self, belief: BeliefMap, position: Coordinate, goal: Coordinate, optimistic_path: tuple[Coordinate, ...],
+        *, requester_id: int | None = None,
     ) -> bool:
         """Binary local expected-utility proxy: unknown state changes next action.
 
@@ -536,12 +583,48 @@ class PSRClosedLoopRunner:
         """
         self._utility_trigger_checks += 1
         started = process_time()
-        pessimistic_path = self.planner.plan(self.pessimistic_adapter.to_planning_map(belief), position, goal).path
+        planner = (
+            self._pessimistic_planners[requester_id]
+            if requester_id is not None and requester_id < len(self._pessimistic_planners)
+            else self.planner
+        )
+        pessimistic_path = planner.plan(self.pessimistic_adapter.to_planning_map(belief), position, goal).path
         elapsed = process_time() - started
         self._pessimistic_planning_calls += 1
         self._planning_cpu_seconds += elapsed
         self._utility_trigger_cpu_seconds += elapsed
         return self._action(optimistic_path, position) != self._action(pessimistic_path, position)
+
+    def _deadline_plan(
+        self, belief: BeliefMap, position: Coordinate, goal: Coordinate,
+        optimistic_path: tuple[Coordinate, ...], requester_id: int,
+    ) -> DecisionRepairPlan:
+        """Derive a local repair deadline and byte-minimal witness set."""
+        self._deadline_trigger_checks += 1
+        started = process_time()
+        pessimistic_path = self._pessimistic_planners[requester_id].plan(
+            self.pessimistic_adapter.to_planning_map(belief), position, goal,
+        ).path
+        elapsed = process_time() - started
+        self._pessimistic_planning_calls += 1
+        self._planning_cpu_seconds += elapsed
+        self._utility_trigger_cpu_seconds += elapsed
+        plan = deadline_decision_repair_plan(
+            belief, optimistic_path, pessimistic_path,
+            round_trip_steps=2 * self.config.link.delay_steps,
+            max_horizon=self.config.corridor_horizon,
+            max_cells=self.config.max_digest_cells_per_message(),
+        )
+        if plan.ambiguous:
+            self._deadline_ambiguous_receivers += 1
+            if plan.decision_slack_steps is not None:
+                self._decision_slacks.append(plan.decision_slack_steps)
+                if plan.feasible:
+                    self._deadline_feasible_receivers += 1
+                else:
+                    self._deadline_infeasible_receivers += 1
+        self._deadline_query_cells += len(plan.cells)
+        return plan
 
     @staticmethod
     def _action(path: tuple[Coordinate, ...], position: Coordinate) -> int:

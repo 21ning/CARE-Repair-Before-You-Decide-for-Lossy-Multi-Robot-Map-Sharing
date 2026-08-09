@@ -35,6 +35,7 @@ class ReplicaPolicy(str, Enum):
     MISMATCH_TRIGGERED_FULL_REPAIR = "mismatch_triggered_full_repair"
     ACTION_TRIGGERED_REPAIR = "action_triggered_repair"
     UTILITY_TRIGGERED_REPAIR = "utility_triggered_repair"
+    DEADLINE_AWARE_REPAIR = "deadline_aware_repair"
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,105 @@ class ReplicaDigest:
     """Fixed-size summary of a complete explicit replica, never ground truth."""
 
     digest: str
+
+
+@dataclass(frozen=True)
+class DecisionRepairPlan:
+    """Receiver-local certificate for one deadline-constrained repair query."""
+
+    ambiguous: bool
+    feasible: bool
+    decision_slack_steps: int | None
+    round_trip_steps: int
+    cells: tuple[Coordinate, ...]
+
+
+def first_path_divergence(
+    optimistic_path: tuple[Coordinate, ...],
+    pessimistic_path: tuple[Coordinate, ...],
+) -> int | None:
+    """Return steps until the first different action along two local plans.
+
+    A value of zero means the next actions already disagree. ``None`` means
+    the complete coordinate sequences induce the same action sequence. An
+    empty path is interpreted as waiting at the other path's start.
+    """
+    if not optimistic_path and not pessimistic_path:
+        return None
+    origin = optimistic_path[0] if optimistic_path else pessimistic_path[0]
+    left = optimistic_path or (origin,)
+    right = pessimistic_path or (origin,)
+    last_step = max(len(left), len(right)) - 1
+    for step in range(last_step):
+        left_next = left[step + 1] if step + 1 < len(left) else left[-1]
+        right_next = right[step + 1] if step + 1 < len(right) else right[-1]
+        if left_next != right_next:
+            return step
+    return None
+
+
+def deadline_decision_repair_plan(
+    belief: BeliefMap,
+    optimistic_path: tuple[Coordinate, ...],
+    pessimistic_path: tuple[Coordinate, ...],
+    *,
+    round_trip_steps: int,
+    max_horizon: int,
+    max_cells: int,
+) -> DecisionRepairPlan:
+    """Build the byte-minimal witness query used by deadline-aware CARE.
+
+    The optimistic/pessimistic pair detects a decision ambiguity.  The deadline
+    is the last step before the operational path enters its first unknown cell,
+    which is the latest point at which a returned patch can still cause a safe
+    replan.  The certificate is the unknown one-hop influence set around both
+    ambiguous branches up to reconvergence.  One hop is derived from the
+    planner's four-neighbour action graph, not a tuned corridor radius.
+    """
+    if round_trip_steps < 0 or max_horizon < 1 or max_cells < 0:
+        raise ValueError("deadline and query bounds must be non-negative")
+    divergence = first_path_divergence(optimistic_path, pessimistic_path)
+    if divergence is None:
+        return DecisionRepairPlan(False, False, None, round_trip_steps, ())
+    first_unknown = next((
+        index for index, cell in enumerate(optimistic_path[1:max_horizon + 1], start=1)
+        if int(belief.occupancy[cell]) < 0
+    ), None)
+    if first_unknown is None:
+        return DecisionRepairPlan(True, False, None, round_trip_steps, ())
+    slack = max(0, first_unknown - 1)
+    feasible = slack >= round_trip_steps
+    if not feasible or max_cells == 0:
+        return DecisionRepairPlan(True, feasible, slack, round_trip_steps, ())
+
+    opt_stop = min(len(optimistic_path), max_horizon + 1)
+    pess_stop = min(len(pessimistic_path), max_horizon + 1)
+    pessimistic_index = {
+        cell: index for index, cell in enumerate(pessimistic_path[divergence + 1:pess_stop], start=divergence + 1)
+    }
+    reconvergence = next((
+        (index, pessimistic_index[cell])
+        for index, cell in enumerate(optimistic_path[divergence + 1:opt_stop], start=divergence + 1)
+        if cell in pessimistic_index
+    ), None)
+    if reconvergence is not None:
+        opt_stop, pess_stop = reconvergence[0] + 1, reconvergence[1] + 1
+
+    branch = tuple(optimistic_path[divergence + 1:opt_stop]) + tuple(
+        pessimistic_path[divergence + 1:pess_stop]
+    )
+    priority: dict[Coordinate, tuple[int, int, int, int]] = {}
+    for branch_index, (x, y) in enumerate(branch):
+        for distance, cell in (
+            (0, (x, y)), (1, (x - 1, y)), (1, (x + 1, y)),
+            (1, (x, y - 1)), (1, (x, y + 1)),
+        ):
+            if not belief.in_bounds(*cell) or int(belief.occupancy[cell]) >= 0:
+                continue
+            key = branch_index, distance, cell[0], cell[1]
+            priority[cell] = min(priority.get(cell, key), key)
+    witnesses = tuple(sorted(priority, key=priority.__getitem__)[:max_cells])
+    return DecisionRepairPlan(True, feasible, slack, round_trip_steps, witnesses)
 
 
 def update_stamp(update: MapUpdate) -> ReplicaStamp:

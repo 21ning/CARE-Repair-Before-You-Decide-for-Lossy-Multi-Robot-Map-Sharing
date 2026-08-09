@@ -217,7 +217,11 @@ def test_utility_triggered_repair_uses_only_local_action_sensitivity() -> None:
 
 def test_new_triggered_repairs_keep_ordinary_deltas_one_shot() -> None:
     update = MapUpdate.create(sender_id=0, x=1, y=1, cell_state=0, version=1, observed_at=0)
-    for policy in (ReplicaPolicy.ACTION_TRIGGERED_REPAIR, ReplicaPolicy.UTILITY_TRIGGERED_REPAIR):
+    for policy in (
+        ReplicaPolicy.ACTION_TRIGGERED_REPAIR,
+        ReplicaPolicy.UTILITY_TRIGGERED_REPAIR,
+        ReplicaPolicy.DEADLINE_AWARE_REPAIR,
+    ):
         runner = PSRClosedLoopRunner(policy=policy, config=_config(loss=0.0))
         task = _DeliveryTask(update, receiver_id=1)
         outboxes = [{task.key: task}, {}]
@@ -225,3 +229,31 @@ def test_new_triggered_repairs_keep_ordinary_deltas_one_shot() -> None:
         runner._send_delta_tasks(network, step=0, outboxes=outboxes, data_budget=[CommunicationBudget(update.encoded_size_bytes), CommunicationBudget(0)])
         assert task.key not in outboxes[0]
         assert task.attempts == 1
+
+
+def test_deadline_aware_repair_records_feasibility_and_witness_cells() -> None:
+    result = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.DEADLINE_AWARE_REPAIR,
+        config=replace(_config(loss=0.0), repair_interval_steps=1),
+    ).run(_instance())
+    assert result.planner == "astar"
+    assert result.deadline_trigger_checks > 0
+    assert result.deadline_ambiguous_receivers > 0
+    assert result.deadline_feasible_receivers > 0
+    assert result.deadline_query_cells > 0
+    assert result.mean_decision_slack is not None
+
+
+def test_runner_supports_incremental_dstar_lite_without_policy_changes() -> None:
+    first = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.DEADLINE_AWARE_REPAIR,
+        config=replace(_config(loss=0.0), repair_interval_steps=1),
+        planner="dstar_lite",
+    ).run(_instance())
+    second = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.DEADLINE_AWARE_REPAIR,
+        config=replace(_config(loss=0.0), repair_interval_steps=1),
+        planner="dstar_lite",
+    ).run(_instance())
+    assert first == second
+    assert first.planner == "dstar_lite"

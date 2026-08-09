@@ -28,7 +28,7 @@ from cmvr.utils.config import ExperimentConfig
 
 
 RESULT_FIELDS = [
-    "seed", "topology_family", "map_size", "num_agents", "layout_seed", "network_seed", "instance_fingerprint", "density", "loss_probability", "delay_steps", "policy",
+    "seed", "topology_family", "map_size", "num_agents", "layout_seed", "network_seed", "instance_fingerprint", "density", "loss_probability", "delay_steps", "planner", "policy",
     "episode_length", "completion_success_rate", "instance_success_rate",
     "mean_replica_error", "mean_path_repairable_error", "mean_path_truth_error",
     "mean_recovery_latency", "unresolved_repair_events", "repair_events",
@@ -39,10 +39,13 @@ RESULT_FIELDS = [
     "delivered_control_bytes", "attempted_repair_bytes", "delivered_repair_bytes",
     "optimistic_planning_calls", "pessimistic_planning_calls", "utility_trigger_checks",
     "utility_triggered_receivers", "corridor_query_receivers", "planning_cpu_ms",
+    "deadline_trigger_checks", "deadline_ambiguous_receivers",
+    "deadline_feasible_receivers", "deadline_infeasible_receivers",
+    "deadline_query_cells", "mean_decision_slack",
     "utility_trigger_cpu_ms", "episode_cpu_ms",
 ]
 TRACE_FIELDS = [
-    "seed", "density", "loss_probability", "delay_steps", "policy", "step",
+    "seed", "density", "loss_probability", "delay_steps", "planner", "policy", "step",
     "replica_error", "path_repairable_error", "path_truth_error", "repair_events", "candidate_updates",
 ]
 
@@ -85,18 +88,21 @@ def runner_config(config: dict, *, seed: int, density: float, loss: float, delay
     )
 
 
-def _run_policy_task(task: tuple[dict, float, int, int, int, float, int, str]) -> tuple[dict, list[dict]]:
+def _run_policy_task(task: tuple[dict, float, int, int, int, float, int, str, str]) -> tuple[dict, list[dict]]:
     """Run one independent policy episode for deterministic process parallelism."""
-    config, density, trial_seed, layout_seed, network_seed, loss, delay, policy_name = task
+    config, density, trial_seed, layout_seed, network_seed, loss, delay, planner_name, policy_name = task
     instance = _instance_for_condition(config, seed=layout_seed, density=density)
     run_config = runner_config(config, seed=network_seed, density=density, loss=loss, delay=delay)
-    result = PSRClosedLoopRunner(policy=ReplicaPolicy(policy_name), config=run_config).run(instance)
+    result = PSRClosedLoopRunner(
+        policy=ReplicaPolicy(policy_name), config=run_config, planner=planner_name,
+    ).run(instance)
     row = {
         "seed": trial_seed, "topology_family": config.get("instance_family", "random"),
         "map_size": int(config["map_size"]), "num_agents": int(config["num_agents"]),
         "layout_seed": layout_seed, "network_seed": network_seed,
         "instance_fingerprint": instance.fingerprint(), "density": density,
-        "loss_probability": loss, "delay_steps": delay, "policy": policy_name,
+        "loss_probability": loss, "delay_steps": delay, "planner": planner_name,
+        "policy": policy_name,
         "episode_length": result.episode_length,
         "completion_success_rate": result.completion_success_rate,
         "instance_success_rate": result.instance_success_rate,
@@ -111,6 +117,12 @@ def _run_policy_task(task: tuple[dict, float, int, int, int, float, int, str]) -
         "utility_trigger_checks": result.utility_trigger_checks,
         "utility_triggered_receivers": result.utility_triggered_receivers,
         "corridor_query_receivers": result.corridor_query_receivers,
+        "deadline_trigger_checks": result.deadline_trigger_checks,
+        "deadline_ambiguous_receivers": result.deadline_ambiguous_receivers,
+        "deadline_feasible_receivers": result.deadline_feasible_receivers,
+        "deadline_infeasible_receivers": result.deadline_infeasible_receivers,
+        "deadline_query_cells": result.deadline_query_cells,
+        "mean_decision_slack": result.mean_decision_slack,
         "planning_cpu_ms": result.planning_cpu_ms,
         "utility_trigger_cpu_ms": result.utility_trigger_cpu_ms,
         "episode_cpu_ms": result.episode_cpu_ms,
@@ -118,7 +130,8 @@ def _run_policy_task(task: tuple[dict, float, int, int, int, float, int, str]) -
     }
     traces = [{
         "seed": trial_seed, "density": density, "loss_probability": loss,
-        "delay_steps": delay, "policy": policy_name, "step": trace.step,
+        "delay_steps": delay, "planner": planner_name, "policy": policy_name,
+        "step": trace.step,
         "replica_error": trace.replica_error,
         "path_repairable_error": trace.path_repairable_error,
         "path_truth_error": trace.path_truth_error,
@@ -152,8 +165,10 @@ def run_suite(config: dict, output: Path) -> dict:
         for trial_seed, layout_seed, network_seed in trial_plan:
             for loss in config["loss_probabilities"]:
                 for delay in config["delay_steps"]:
-                    for policy_name in config["policies"]:
-                        tasks.append((config, float(density), trial_seed, layout_seed, network_seed, float(loss), int(delay), str(policy_name)))
+                    planners = config.get("planners", [config.get("planner", "astar")])
+                    for planner_name in planners:
+                        for policy_name in config["policies"]:
+                            tasks.append((config, float(density), trial_seed, layout_seed, network_seed, float(loss), int(delay), str(planner_name), str(policy_name)))
     workers = int(config.get("workers", 1))
     if workers < 1:
         raise ValueError("workers must be positive")
