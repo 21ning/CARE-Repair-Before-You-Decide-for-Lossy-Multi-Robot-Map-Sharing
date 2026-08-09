@@ -8,6 +8,23 @@ planning decision.
 
 ![CARE running in POGEMA](assets/pogema_demo.gif)
 
+The animation shows **Robot 1's evolving local map replica**, not the complete
+ground-truth map. It starts fully unknown and is updated by local sensing and
+lossy messages received from peers.
+
+| Visual element | Meaning |
+| --- | --- |
+| Gray cell | Unknown to Robot 1 |
+| White cell | Observed locally by Robot 1 |
+| Blue cell | Map information received from another robot |
+| Dark cell | Known obstacle |
+| Colored circle / square | Current robot position / assigned goal |
+
+Robot positions and goals are drawn as a global motion overlay so the paths
+remain easy to follow; they are not part of Robot 1's occupancy-map knowledge.
+The episode uses eight agents, 30% packet loss, and start-to-goal distances of
+14--48 cells, so no robot begins at or immediately beside its goal.
+
 The environment and robot motion are provided by
 [POGEMA](https://github.com/AIRI-Institute/pogema). All methods use the same
 fixed A* planner, map representation, packet-loss trace, delay model, and byte
@@ -113,10 +130,8 @@ are documented in [docs/REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md).
 
 ## Generate the POGEMA demo
 
-The README animation runs one PSR-UT episode with eight agents and 30% packet
-loss, then replays the recorded actions in POGEMA. It visualizes Robot 1's
-actual local replica rather than the ground-truth map: gray cells are unknown,
-white cells were observed locally, and blue cells were learned from peers.
+The README animation runs one deterministic PSR-UT episode and replays its
+recorded actions in POGEMA using the visualization semantics described above.
 
 ```bash
 python scripts/make_pogema_demo.py --output assets/pogema_demo.gif
