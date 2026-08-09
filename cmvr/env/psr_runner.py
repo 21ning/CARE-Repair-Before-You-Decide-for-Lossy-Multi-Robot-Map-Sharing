@@ -10,10 +10,15 @@ import numpy as np
 from pogema import GridConfig, pogema_v0
 
 from cmvr.communication import (
-    CommunicationBudget, DeltaPayload, DigestQuery, MessageKind, NetworkMessage,
-    PSRConfig, PatchPayload, ReplicaPolicy, UnreliableNetwork, belief_stamp,
-    full_replica_chunk, ordered_digest_peers, planning_corridor,
-    path_weight, replica_digest, update_from_belief, update_stamp,
+    ACK_BYTES, DIGEST_ENTRY_BYTES, DIGEST_HEADER_BYTES,
+    PATCH_HEADER_BYTES, REPLICA_DIGEST_BYTES, CommunicationBudget, DeltaPayload,
+    DigestQuery, MessageKind, NetworkMessage, PSRConfig, PatchPayload,
+    ReplicaPolicy, UnreliableNetwork, ack_token, belief_stamp, decode_ack,
+    decode_delta, decode_digest_query, decode_patch, decode_replica_digest,
+    encode_ack, encode_delta, encode_digest_query, encode_patch,
+    encode_replica_digest, full_replica_chunk, ordered_digest_peers,
+    planning_corridor, path_weight, replica_digest, update_from_belief,
+    update_stamp,
 )
 from cmvr.env.instance import EpisodeInstance
 from cmvr.mapping import BeliefMap, DeltaEncoder, MapUpdate, PlanningMapAdapter
@@ -98,6 +103,19 @@ class PSRClosedLoopRunner:
     ) -> None:
         self.policy = ReplicaPolicy(policy)
         self.config = config
+        expected_wire_sizes = (
+            DIGEST_HEADER_BYTES, DIGEST_ENTRY_BYTES, ACK_BYTES,
+            PATCH_HEADER_BYTES, REPLICA_DIGEST_BYTES,
+        )
+        configured_wire_sizes = (
+            config.digest_base_bytes, config.digest_entry_bytes, config.ack_bytes,
+            config.patch_base_bytes, config.replica_digest_bytes,
+        )
+        if configured_wire_sizes != expected_wire_sizes:
+            raise ValueError(
+                "PSRConfig packet sizes must match the canonical wire codec: "
+                f"configured={configured_wire_sizes}, expected={expected_wire_sizes}"
+            )
         self.step_observer = step_observer
         self.adapter = PlanningMapAdapter("optimistic")
         self.pessimistic_adapter = PlanningMapAdapter("pessimistic")
@@ -109,6 +127,12 @@ class PSRClosedLoopRunner:
         self._planning_cpu_seconds = self._utility_trigger_cpu_seconds = 0.0
 
     def run(self, instance: EpisodeInstance) -> PSRResult:
+        if instance.map_size > 64:
+            raise ValueError("canonical digest codec supports maps up to 64x64")
+        if instance.num_agents > 63:
+            raise ValueError("canonical digest codec supports at most 63 agents")
+        if instance.max_episode_steps > 65_535:
+            raise ValueError("canonical digest codec supports at most 65,535 episode steps")
         episode_start = process_time()
         self._optimistic_planning_calls = 0
         self._pessimistic_planning_calls = 0
@@ -245,10 +269,16 @@ class PSRClosedLoopRunner:
                 ))
             for key, task in tasks:
                 attempt = task.attempts
+                payload = DeltaPayload(
+                    task.update,
+                    key if self.policy in {
+                        ReplicaPolicy.RETRY_ALL_ARQ, ReplicaPolicy.PATH_WEIGHTED_ARQ,
+                    } else None,
+                )
+                encoded = encode_delta(payload, receiver_id=task.receiver_id)
                 message = network.make_message(
                     MessageKind.DELTA, sender_id, task.receiver_id,
-                    DeltaPayload(task.update, key if self.policy in {ReplicaPolicy.RETRY_ALL_ARQ, ReplicaPolicy.PATH_WEIGHTED_ARQ} else None),
-                    task.update.encoded_size_bytes, step, category="data",
+                    encoded, len(encoded), step, category="data",
                     link_key=f"delta|{task.update.update_id}|{task.receiver_id}|{attempt}",
                     is_retransmission=attempt > 0,
                 )
@@ -318,9 +348,12 @@ class PSRClosedLoopRunner:
                 update = updates[(cell_start + cell_offset) % len(updates)]
                 for receiver_offset in range(len(receivers)):
                     receiver_id = receivers[(receiver_start + receiver_offset) % len(receivers)]
+                    encoded = encode_delta(
+                        DeltaPayload(update, is_repair=True), receiver_id=receiver_id,
+                    )
                     message = network.make_message(
                         MessageKind.DELTA, sender_id, receiver_id,
-                        DeltaPayload(update, is_repair=True), update.encoded_size_bytes,
+                        encoded, len(encoded),
                         step, category="repair",
                         link_key=f"periodic-full|{sync_round}|{update.update_id}|{receiver_id}",
                     )
@@ -350,7 +383,7 @@ class PSRClosedLoopRunner:
             if not cells:
                 continue
             payload = DigestQuery(cells, tuple(belief_stamp(beliefs[requester_id], cell) for cell in cells), regional_only, action_only)
-            byte_size = self.config.digest_base_bytes + self.config.digest_entry_bytes * len(cells)
+            encoded = encode_digest_query(payload)
             # A bounded control plane uses deterministic round-robin gossip,
             # rather than permanently preferring low-index peers when a digest
             # budget cannot cover every teammate in one round.
@@ -359,7 +392,7 @@ class PSRClosedLoopRunner:
                 requester_id=requester_id, positions=positions, phase=phase,
                 limit=self.config.max_digest_peers,
             ):
-                message = network.make_message(MessageKind.DIGEST_QUERY, requester_id, peer_id, payload, byte_size, step, category="control", link_key=f"digest|{step}|{requester_id}|{peer_id}|{regional_only}|{action_only}|{cells}")
+                message = network.make_message(MessageKind.DIGEST_QUERY, requester_id, peer_id, encoded, len(encoded), step, category="control", link_key=f"digest|{step}|{requester_id}|{peer_id}|{regional_only}|{action_only}|{cells}")
                 self._try_send(network, message, step, control_budget[requester_id])
 
     def _send_replica_digests(
@@ -370,13 +403,14 @@ class PSRClosedLoopRunner:
         phase = step // self.config.repair_interval_steps
         for requester_id, belief in enumerate(beliefs):
             payload = replica_digest(belief)
+            encoded = encode_replica_digest(payload)
             for peer_id in ordered_digest_peers(
                 requester_id=requester_id, positions=positions, phase=phase,
                 limit=self.config.max_digest_peers,
             ):
                 message = network.make_message(
-                    MessageKind.REPLICA_DIGEST, requester_id, peer_id, payload,
-                    self.config.replica_digest_bytes, step, category="control",
+                    MessageKind.REPLICA_DIGEST, requester_id, peer_id, encoded,
+                    len(encoded), step, category="control",
                     link_key=f"replica-digest|{step}|{requester_id}|{peer_id}|{payload.digest}",
                 )
                 self._try_send(network, message, step, control_budget[requester_id])
@@ -393,9 +427,12 @@ class PSRClosedLoopRunner:
                 item[1].receiver_id,
             ))
             for key, task in tasks:
+                encoded = encode_delta(
+                    DeltaPayload(task.update, is_repair=True), receiver_id=task.receiver_id,
+                )
                 message = network.make_message(
                     MessageKind.DELTA, sender_id, task.receiver_id,
-                    DeltaPayload(task.update, is_repair=True), task.update.encoded_size_bytes,
+                    encoded, len(encoded),
                     step, category="repair",
                     link_key=f"mismatch-full|{task.update.update_id}|{task.receiver_id}|{task.attempts}",
                 )
@@ -427,20 +464,26 @@ class PSRClosedLoopRunner:
 
     def _handle_message(self, network: UnreliableNetwork, message: NetworkMessage, step: int, beliefs: tuple[BeliefMap, ...], outboxes: list[dict[tuple[str, int], _DeliveryTask]], full_repair_outboxes: list[dict[tuple[str, int], _DeliveryTask]], data_budget: list[CommunicationBudget], control_budget: list[CommunicationBudget]) -> int:
         if message.kind is MessageKind.DELTA:
-            payload = message.payload
-            assert isinstance(payload, DeltaPayload)
+            payload = decode_delta(message.payload, receiver_id=message.receiver_id)
             applied = beliefs[message.receiver_id].apply_update(payload.update)
             if payload.task_key is not None:
-                ack = network.make_message(MessageKind.ACK, message.receiver_id, message.sender_id, payload.task_key, self.config.ack_bytes, step, category="control", link_key=f"ack|{payload.task_key}|{message.message_id}")
+                encoded = encode_ack(payload.task_key)
+                ack = network.make_message(MessageKind.ACK, message.receiver_id, message.sender_id, encoded, len(encoded), step, category="control", link_key=f"ack|{payload.task_key}|{message.message_id}")
                 self._try_send(network, ack, step, control_budget[message.receiver_id])
             return int(payload.is_repair and applied)
         if message.kind is MessageKind.ACK:
-            if isinstance(message.payload, tuple):
-                outboxes[message.receiver_id].pop(message.payload, None)
+            token = decode_ack(message.payload)
+            matches = [
+                key for key in outboxes[message.receiver_id]
+                if ack_token(key) == token
+            ]
+            if len(matches) > 1:
+                raise RuntimeError("64-bit ACK token collision in active outbox")
+            if matches:
+                outboxes[message.receiver_id].pop(matches[0], None)
             return 0
         if message.kind is MessageKind.DIGEST_QUERY:
-            payload = message.payload
-            assert isinstance(payload, DigestQuery)
+            payload = decode_digest_query(message.payload)
             source_belief = beliefs[message.receiver_id]
             patch = []
             for cell, requester_stamp in zip(payload.cells, payload.requester_stamps):
@@ -448,20 +491,20 @@ class PSRClosedLoopRunner:
                 if update is not None and (payload.regional_only or update_stamp(update) > requester_stamp):
                     patch.append(update)
             if patch:
-                response = network.make_message(MessageKind.PATCH, message.receiver_id, message.sender_id, PatchPayload(tuple(patch)), self.config.patch_base_bytes + sum(update.encoded_size_bytes for update in patch), step, category="repair", link_key=f"patch|{step}|{message.receiver_id}|{message.sender_id}|{tuple(update.update_id for update in patch)}")
+                encoded = encode_patch(PatchPayload(tuple(patch)))
+                response = network.make_message(MessageKind.PATCH, message.receiver_id, message.sender_id, encoded, len(encoded), step, category="repair", link_key=f"patch|{step}|{message.receiver_id}|{message.sender_id}|{tuple(update.update_id for update in patch)}")
                 self._try_send(network, response, step, data_budget[message.receiver_id])
             return 0
         if message.kind is MessageKind.REPLICA_DIGEST:
-            payload = message.payload
-            if payload != replica_digest(beliefs[message.receiver_id]):
+            payload = decode_replica_digest(message.payload)
+            if payload != encode_replica_digest(replica_digest(beliefs[message.receiver_id])):
                 self._enqueue_full_replica(
                     full_repair_outboxes, beliefs[message.receiver_id],
                     sender_id=message.receiver_id, receiver_id=message.sender_id,
                 )
             return 0
         if message.kind is MessageKind.PATCH:
-            payload = message.payload
-            assert isinstance(payload, PatchPayload)
+            payload = decode_patch(message.payload)
             applied = sum(beliefs[message.receiver_id].apply_update(update) for update in payload.updates)
             return int(applied > 0)
         raise ValueError(f"unsupported message kind: {message.kind}")

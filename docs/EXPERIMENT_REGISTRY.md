@@ -13,6 +13,7 @@ submission repository; the final derived tables and figures are retained in
 | PSR-UT-action-001 | Utility trigger versus action-triggered repair | Action-triggered repair, PSR-UT | complete, 200 episodes | `paper/tables/psr_ut_ablation_extension_summary.md` |
 | PSR-UT-scale-001 | 4/8/16/32-agent tiled scale extension | four matched policies | complete, 1,600 episodes | `paper/tables/psr_ut_ablation_extension_summary.md` |
 | PSR-UT-topology-001 | T-junction, asymmetric-fork, narrow-bypass decision geometries | five primary policies | complete, 1,500 episodes | `paper/tables/psr_ut_ablation_extension_summary.md` |
+| PSR-UT-codec-audit-001 | Binary codec integration rerun on the paired action-trigger condition | Action-triggered repair, PSR-UT | complete, 200 episodes | `docs/WIRE_CODEC_AUDIT.md` |
 
 The obsolete Conditional-CMVR/Oracle direction, preliminary PSR variants,
 EPOM training artifacts, and their results are not part of this submission.

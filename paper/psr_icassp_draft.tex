@@ -62,6 +62,17 @@ and state tie break. An incoming cell is merged only if its stamp dominates the
 local stamp. Normal observations are directed one-shot deltas. Data, digest,
 acknowledgement, and repair bytes all traverse the same directed lossy channel.
 
+We use an executable fixed-width wire format rather than object-level traffic
+estimates. A cell delta is 13 bytes, including provenance, coordinates, state,
+version, observation time, and CRC16. A query over $n$ stamped cells is
+$16+6n$ bytes, a patch returning $m$ cells is $4+13m$ bytes, an ACK is 8 bytes,
+and a replica digest is 16 bytes. The six-byte query entry bit-packs bounded
+coordinates and the complete requester stamp. Update identifiers are
+deterministically reconstructed and are not transmitted. The channel carries
+the resulting byte strings; decoders reject invalid lengths, versions, bounds,
+reserved bits, or checksums before applying the same dominating-stamp merge.
+All attempted encoded bytes, including lost packets, count as traffic.
+
 For receiver $j$, fixed A* produces path $\pi_j^t$. Its candidate repair region
 is the dilated imminent corridor
 \begin{equation}

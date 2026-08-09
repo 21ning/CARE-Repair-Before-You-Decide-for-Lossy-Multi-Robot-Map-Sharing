@@ -47,6 +47,26 @@ At every environment step:
 The implementation separates mapping, communication, planning, and environment
 execution so that the protocol can be inspected or replaced independently.
 
+## Wire format and traffic accounting
+
+The simulated link carries real fixed-width binary payloads. Traffic is the
+sum of encoded payload lengths for every attempted transmission, including
+packets later lost by the channel.
+
+| Payload | Encoded size |
+| --- | ---: |
+| Cell Delta | 13 bytes |
+| Digest Query | `16 + 6N` bytes for N stamped cells |
+| Patch | `4 + 13M` bytes for M returned cells |
+| ACK | 8 bytes |
+| Replica digest | 16 bytes |
+
+Receivers validate lengths, versions, reserved bits, bounds, and Delta CRCs,
+then apply only updates whose version stamp dominates the local copy. Update
+IDs are reconstructed and are not transmitted. See
+[docs/WIRE_FORMAT.md](docs/WIRE_FORMAT.md) for the bit layout and decoder
+contract.
+
 ## Repository layout
 
 ```text

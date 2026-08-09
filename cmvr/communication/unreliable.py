@@ -7,10 +7,9 @@ keeps a complete immutable event log for later reliability analysis.
 
 from __future__ import annotations
 
-from hashlib import sha256
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from hashlib import sha256
 
 
 class MessageKind(str, Enum):
@@ -61,7 +60,7 @@ class NetworkMessage:
     kind: MessageKind
     sender_id: int
     receiver_id: int
-    payload: Any
+    payload: bytes
     byte_size: int
     created_at: int
     category: str
@@ -73,6 +72,12 @@ class NetworkMessage:
             raise ValueError("network messages must be directed to a different receiver")
         if self.byte_size <= 0:
             raise ValueError("network messages must have a positive authoritative byte size")
+        if not isinstance(self.payload, bytes):
+            raise TypeError("network payloads must be canonical encoded bytes")
+        if len(self.payload) != self.byte_size:
+            raise ValueError(
+                f"encoded payload length {len(self.payload)} does not match byte_size {self.byte_size}"
+            )
 
 
 @dataclass(frozen=True)
@@ -103,7 +108,7 @@ class UnreliableNetwork:
         kind: MessageKind,
         sender_id: int,
         receiver_id: int,
-        payload: Any,
+        payload: bytes,
         byte_size: int,
         created_at: int,
         *,

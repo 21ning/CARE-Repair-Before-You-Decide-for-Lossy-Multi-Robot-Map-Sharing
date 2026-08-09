@@ -10,16 +10,21 @@ from .cell_state import CellState
 
 @dataclass(frozen=True)
 class PacketFormat:
-    """Fixed wire-format accounting for a one-cell update packet."""
+    """Fixed canonical wire allocation for a one-cell update packet."""
 
-    header_bytes: int = 4
-    coordinate_bytes: int = 4
-    state_version_bytes: int = 5
-    payload_bytes: int = 0
+    protocol_header_bytes: int = 1
+    provenance_coordinate_state_bytes: int = 4
+    version_time_bytes: int = 6
+    checksum_bytes: int = 2
 
     @property
     def encoded_size_bytes(self) -> int:
-        return self.header_bytes + self.coordinate_bytes + self.state_version_bytes + self.payload_bytes
+        return (
+            self.protocol_header_bytes
+            + self.provenance_coordinate_state_bytes
+            + self.version_time_bytes
+            + self.checksum_bytes
+        )
 
 
 DEFAULT_PACKET_FORMAT = PacketFormat()

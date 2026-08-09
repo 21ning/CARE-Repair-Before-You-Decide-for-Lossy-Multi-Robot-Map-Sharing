@@ -31,6 +31,7 @@ flowchart LR
 | `cmvr/planning/` | 确定性 A* 和路径合法性 | runner 在每步对每个 receiver-local map 规划；PSR-UT 用乐观/悲观两个规划结果判断下一动作是否不同。 |
 | `cmvr/communication/unreliable.py` | 有向、固定 seed 的丢包/延迟信道与 event log | 所有 delta、digest、ACK 和 repair 都经过同一对象；输出按 data/control/repair 分项计费。 |
 | `cmvr/communication/replica_protocol.py` | policy enum、配置、digest、corridor 和 patch payload | 定义 wire-level 对象，不访问真值地图或 planner。 |
+| `cmvr/communication/wire.py` | 固定宽度二进制 codec、CRC、字段边界和精确长度 | runner 在发送前编码、到达后解码；network 只接受 `bytes` 且强制 `len(payload) == byte_size`。 |
 | `cmvr/env/instance.py`、`structured_instances.py` | 随机与决策关键拓扑实例 | 为所有配对策略生成同一个可指纹化实例。 |
 | `cmvr/env/psr_runner.py` | 唯一的 closed-loop 执行器 | 编排观测、A*、通信、交付、修复与 POGEMA 动作，并生成 episode 级与 step 级指标。 |
 | `cmvr/utils/` | 配置和随机种子 | 保证跨进程、跨重跑的一致性。 |
@@ -51,6 +52,16 @@ instance/loss trace。差别只在“何时修复”与“修复哪里”。
 Periodic Full 在非同步步发送普通 one-shot delta；同步步用同一 data cap
 优先发送完整已知副本的一个 chunk。chunk 同时轮转 cell 和 receiver，避免
 小预算下总是只发送给低编号机器人或只发送首批 cell。
+
+## 编码、解码与计费
+
+应用层实际发送固定宽度字节串，而不是直接在 network 中传递 Python
+对象。Cell Delta 为 13 B，Digest Query 为 `16+6N` B，Patch 为
+`4+13M` B，ACK 为 8 B，Replica Digest 为 16 B。发送预算使用编码后的
+`len(payload)`，丢失包同样计入 attempted traffic。接收端先验证 wire
+version、长度、保留位、字段边界与 Delta CRC，再重建 update 并按
+`(version, observed_at, source_id, state)` 合并。完整字段与位布局见
+[`docs/WIRE_FORMAT.md`](WIRE_FORMAT.md)。
 
 ## 脚本与结果契约
 

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
+
 from cmvr.communication import CommunicationBudget, LinkConfig, MessageStatus, UnreliableNetwork
 from cmvr.env import PSRClosedLoopRunner, PSRConfig, ReplicaPolicy, generate_instance
 from cmvr.env.psr_runner import _DeliveryTask
@@ -53,6 +57,22 @@ def test_step_observer_receives_isolated_replica_snapshots() -> None:
     fingerprint = snapshots[0][1][0].fingerprint()
     snapshots[-1][1][0].occupancy.fill(CellState.UNKNOWN)
     assert snapshots[0][1][0].fingerprint() == fingerprint
+
+
+def test_runner_rejects_packet_sizes_that_disagree_with_wire_codec() -> None:
+    with pytest.raises(ValueError, match="canonical wire codec"):
+        PSRClosedLoopRunner(
+            policy=ReplicaPolicy.UTILITY_TRIGGERED_REPAIR,
+            config=replace(_config(), digest_entry_bytes=7),
+        )
+
+
+def test_runner_rejects_instances_outside_digest_bit_widths() -> None:
+    oversized = replace(_instance(), max_episode_steps=65_536)
+    with pytest.raises(ValueError, match="65,535"):
+        PSRClosedLoopRunner(
+            policy=ReplicaPolicy.UTILITY_TRIGGERED_REPAIR, config=_config(),
+        ).run(oversized)
 
 
 def test_retry_all_uses_ack_control_traffic_and_no_comm_uses_none() -> None:
