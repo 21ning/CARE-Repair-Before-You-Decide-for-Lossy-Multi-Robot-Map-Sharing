@@ -11,16 +11,24 @@ from pogema import GridConfig, pogema_v0
 
 from cmvr.communication import (
     ACK_BYTES, DIGEST_ENTRY_BYTES, DIGEST_HEADER_BYTES, DecisionRepairPlan,
-    PATCH_HEADER_BYTES, REPLICA_DIGEST_BYTES, CommunicationBudget, DeltaPayload,
-    DigestQuery, MessageKind, NetworkMessage, PSRConfig, PatchPayload,
+    HASH_BYTES, IBLT_CELL_BYTES, IBLT_HEADER_BYTES,
+    MERKLE_CHILDREN_HEADER_BYTES, PATCH_HEADER_BYTES, REPLICA_DIGEST_BYTES,
+    SCUTTLE_DIGEST_ENTRY_BYTES, SCUTTLE_DIGEST_HEADER_BYTES,
+    CommunicationBudget, DeltaPayload, DigestQuery, IBLTSketch, MerkleChildren,
+    MerkleMatch, MerkleProbe, MerkleTree, MessageKind, NetworkMessage, PSRConfig, PatchPayload,
     ReplicaPolicy, UnreliableNetwork, ack_token, belief_stamp, decode_ack,
     ScenarioCertificate, deadline_decision_repair_plan, decision_candidate_cells,
-    decode_delta, decode_digest_query, decode_patch, decode_replica_digest,
-    encode_ack, encode_delta, encode_digest_query, encode_patch,
-    encode_replica_digest, full_replica_chunk, minimum_scenario_certificate,
-    ordered_digest_peers, planning_corridor, path_weight, replica_digest,
-    scenario_blocked_sets, update_from_belief,
-    update_stamp,
+    ScuttleDigest, build_iblt, decode_delta, decode_digest_query,
+    decode_iblt_sketch, decode_merkle_children, decode_merkle_match,
+    decode_merkle_probe, decode_patch,
+    decode_replica_digest, decode_scuttle_digest, encode_ack, encode_delta,
+    encode_digest_query, encode_iblt_sketch, encode_merkle_children,
+    encode_merkle_match, encode_merkle_probe, encode_patch, encode_replica_digest,
+    encode_scuttle_digest, full_replica_chunk, minimum_scenario_certificate,
+    ordered_digest_peers, peel_iblt, planning_corridor, path_weight,
+    record_scuttle_update, replica_digest, scenario_blocked_sets,
+    scuttle_depth_updates, scuttle_max_versions, subtract_iblt,
+    update_from_belief, update_stamp,
 )
 from cmvr.env.instance import EpisodeInstance, critical_decision_pairs
 from cmvr.mapping import BeliefMap, DeltaEncoder, MapUpdate, PlanningMapAdapter
@@ -98,6 +106,13 @@ class PSRResult:
     mean_visibility_gap_steps: float | None
     mean_usable_communication_window_steps: float | None
     decision_before_self_observation_rate: float | None
+    scuttle_digest_exchanges: int
+    scuttle_patch_updates: int
+    merkle_nodes_compared: int
+    merkle_leaf_repairs: int
+    iblt_decode_attempts: int
+    iblt_decode_successes: int
+    iblt_patch_updates: int
     planning_cpu_ms: float = field(compare=False)
     utility_trigger_cpu_ms: float = field(compare=False)
     certificate_cpu_ms: float = field(compare=False)
@@ -169,6 +184,15 @@ class PSRClosedLoopRunner:
         self._certificate_query_cells = 0
         self._certificate_candidate_cap_checks = self._certificate_candidate_cap_hits = 0
         self._certificate_uncapped_candidate_cells = 0
+        self._scuttle_digest_exchanges = self._scuttle_patch_updates = 0
+        self._merkle_nodes_compared = self._merkle_leaf_repairs = 0
+        self._iblt_decode_attempts = self._iblt_decode_successes = 0
+        self._iblt_patch_updates = 0
+        self._map_width = 0
+        self._scuttle_archives: list[dict[int, dict[Coordinate, MapUpdate]]] = []
+        self._merkle_cache: dict[int, tuple[str, MerkleTree]] = {}
+        self._merkle_pending: dict[tuple[int, int], set[int]] = {}
+        self._iblt_cache: dict[tuple[int, int], tuple[str, IBLTSketch]] = {}
         self._planning_cpu_seconds = self._utility_trigger_cpu_seconds = 0.0
         self._certificate_cpu_seconds = 0.0
 
@@ -179,6 +203,26 @@ class PSRClosedLoopRunner:
             raise ValueError("canonical digest codec supports at most 63 agents")
         if instance.max_episode_steps > 65_535:
             raise ValueError("canonical digest codec supports at most 65,535 episode steps")
+        if (
+            self.policy is ReplicaPolicy.SCUTTLEBUTT_DEPTH
+            and SCUTTLE_DIGEST_HEADER_BYTES
+            + SCUTTLE_DIGEST_ENTRY_BYTES * instance.num_agents
+            > self.config.control_bytes_per_agent_per_step
+        ):
+            raise ValueError("Scuttlebutt digest exceeds the per-step control budget")
+        if (
+            self.policy is ReplicaPolicy.IBLT_RECONCILIATION
+            and IBLT_HEADER_BYTES + IBLT_CELL_BYTES * self.config.iblt_cells
+            > self.config.control_bytes_per_agent_per_step
+        ):
+            raise ValueError("IBLT sketch exceeds the per-step control budget")
+        if (
+            self.policy is ReplicaPolicy.MERKLE_ANTI_ENTROPY
+            and MERKLE_CHILDREN_HEADER_BYTES
+            + HASH_BYTES * self.config.merkle_fanout
+            > self.config.control_bytes_per_agent_per_step
+        ):
+            raise ValueError("Merkle child response exceeds the per-step control budget")
         episode_start = process_time()
         self._optimistic_planning_calls = 0
         self._pessimistic_planning_calls = 0
@@ -195,6 +239,15 @@ class PSRClosedLoopRunner:
         self._certificate_query_cells = 0
         self._certificate_candidate_cap_checks = self._certificate_candidate_cap_hits = 0
         self._certificate_uncapped_candidate_cells = 0
+        self._scuttle_digest_exchanges = self._scuttle_patch_updates = 0
+        self._merkle_nodes_compared = self._merkle_leaf_repairs = 0
+        self._iblt_decode_attempts = self._iblt_decode_successes = 0
+        self._iblt_patch_updates = 0
+        self._map_width = instance.map_size
+        self._scuttle_archives = [dict() for _ in range(instance.num_agents)]
+        self._merkle_cache = {}
+        self._merkle_pending = {}
+        self._iblt_cache = {}
         self._planning_cpu_seconds = 0.0
         self._utility_trigger_cpu_seconds = 0.0
         self._certificate_cpu_seconds = 0.0
@@ -241,6 +294,12 @@ class PSRClosedLoopRunner:
             for sender_id, observation in enumerate(observations):
                 updates = self.encoder.observe(beliefs[sender_id], observation[0], positions[sender_id], sender_id=sender_id, step=step)
                 local_updates.extend(updates)
+                if self.policy is ReplicaPolicy.SCUTTLEBUTT_DEPTH:
+                    for update in updates:
+                        record_scuttle_update(
+                            self._scuttle_archives[sender_id], update,
+                            map_width=self._map_width,
+                        )
                 self._enqueue_updates(outboxes, updates, sender_id, len(beliefs))
             paths = self._paths(beliefs, positions, instance.goals)
             self._dispatch_data(network, step, beliefs, outboxes, full_repair_outboxes, data_budget, control_budget, paths, positions, instance.goals)
@@ -327,6 +386,10 @@ class PSRClosedLoopRunner:
             float(np.mean(visibility_gaps)) if visibility_gaps else None,
             float(np.mean(usable_windows)) if usable_windows else None,
             float(np.mean(decision_before_self)) if decision_before_self else None,
+            self._scuttle_digest_exchanges, self._scuttle_patch_updates,
+            self._merkle_nodes_compared, self._merkle_leaf_repairs,
+            self._iblt_decode_attempts, self._iblt_decode_successes,
+            self._iblt_patch_updates,
             self._planning_cpu_seconds * 1_000,
             self._utility_trigger_cpu_seconds * 1_000,
             self._certificate_cpu_seconds * 1_000,
@@ -334,7 +397,9 @@ class PSRClosedLoopRunner:
         )
 
     def _enqueue_updates(self, outboxes: list[dict[tuple[str, int], _DeliveryTask]], updates: Iterable[MapUpdate], sender_id: int, agents: int) -> None:
-        if self.policy is ReplicaPolicy.NO_COMMUNICATION:
+        if self.policy in {
+            ReplicaPolicy.NO_COMMUNICATION, ReplicaPolicy.SCUTTLEBUTT_DEPTH,
+        }:
             return
         for update in updates:
             for receiver_id in range(agents):
@@ -355,6 +420,8 @@ class PSRClosedLoopRunner:
             ReplicaPolicy.UTILITY_TRIGGERED_REPAIR,
             ReplicaPolicy.DEADLINE_AWARE_REPAIR,
             ReplicaPolicy.CERTIFICATE_REPAIR,
+            ReplicaPolicy.MERKLE_ANTI_ENTROPY,
+            ReplicaPolicy.IBLT_RECONCILIATION,
         } or (self.policy is ReplicaPolicy.PERIODIC_FULL_SYNC and not is_periodic_sync_step):
             self._send_delta_tasks(network, step, outboxes, data_budget, paths)
         if is_periodic_sync_step:
@@ -374,6 +441,12 @@ class PSRClosedLoopRunner:
         if self.policy is ReplicaPolicy.MISMATCH_TRIGGERED_FULL_REPAIR and step % self.config.repair_interval_steps == 0:
             self._send_replica_digests(network, step, beliefs, control_budget, positions)
             self._send_full_repair_tasks(network, step, full_repair_outboxes, data_budget)
+        if self.policy is ReplicaPolicy.SCUTTLEBUTT_DEPTH and step % self.config.repair_interval_steps == 0:
+            self._send_scuttle_digests(network, step, positions, control_budget)
+        if self.policy is ReplicaPolicy.MERKLE_ANTI_ENTROPY and step % self.config.repair_interval_steps == 0:
+            self._send_merkle_roots(network, step, beliefs, positions, control_budget)
+        if self.policy is ReplicaPolicy.IBLT_RECONCILIATION and step % self.config.repair_interval_steps == 0:
+            self._send_iblt_sketches(network, step, beliefs, positions, control_budget)
 
     def _send_delta_tasks(self, network: UnreliableNetwork, step: int, outboxes: list[dict[tuple[str, int], _DeliveryTask]], data_budget: list[CommunicationBudget], paths: tuple[tuple[Coordinate, ...], ...] | None = None) -> None:
         for sender_id, outbox in enumerate(outboxes):
@@ -421,8 +494,100 @@ class PSRClosedLoopRunner:
                     ReplicaPolicy.ACTION_TRIGGERED_REPAIR, ReplicaPolicy.UTILITY_TRIGGERED_REPAIR,
                     ReplicaPolicy.DEADLINE_AWARE_REPAIR,
                     ReplicaPolicy.CERTIFICATE_REPAIR,
+                    ReplicaPolicy.MERKLE_ANTI_ENTROPY,
+                    ReplicaPolicy.IBLT_RECONCILIATION,
                 }:
                     outbox.pop(key, None)
+
+    def _send_scuttle_digests(
+        self, network: UnreliableNetwork, step: int,
+        positions: tuple[Coordinate, ...],
+        control_budget: list[CommunicationBudget],
+    ) -> None:
+        """Initiate one bounded Scuttlebutt push-pull exchange per robot."""
+        for requester_id, archive in enumerate(self._scuttle_archives):
+            payload = ScuttleDigest(scuttle_max_versions(
+                archive, source_count=len(self._scuttle_archives),
+                map_width=self._map_width,
+            ))
+            encoded = encode_scuttle_digest(payload)
+            phase = step // self.config.repair_interval_steps
+            for peer_id in ordered_digest_peers(
+                requester_id=requester_id, positions=positions, phase=phase,
+                limit=self.config.max_digest_peers,
+            ):
+                message = network.make_message(
+                    MessageKind.SCUTTLE_DIGEST, requester_id, peer_id,
+                    encoded, len(encoded), step, category="control",
+                    link_key=f"scuttle-digest|{step}|{requester_id}|{peer_id}|pull",
+                )
+                self._try_send(network, message, step, control_budget[requester_id])
+
+    def _send_merkle_roots(
+        self, network: UnreliableNetwork, step: int,
+        beliefs: tuple[BeliefMap, ...], positions: tuple[Coordinate, ...],
+        control_budget: list[CommunicationBudget],
+    ) -> None:
+        """Advance one serialized Merkle traversal per selected peer.
+
+        A breadth-first exchange can exhaust a bounded control budget before
+        reaching any leaf.  We therefore retain sibling branches and resume
+        them on later repair ticks, while following one mismatching branch
+        depth-first in the current tick.  When no branch remains, comparison
+        restarts at the root to detect newer replica changes.
+        """
+        phase = step // self.config.repair_interval_steps
+        peer_phase = phase // self.config.merkle_session_steps
+        for requester_id in range(len(beliefs)):
+            tree = self._merkle_tree(beliefs, requester_id)
+            for peer_id in ordered_digest_peers(
+                requester_id=requester_id, positions=positions, phase=peer_phase,
+                limit=self.config.max_digest_peers,
+            ):
+                pair = requester_id, peer_id
+                pending = self._merkle_pending.setdefault(pair, set())
+                if not pending:
+                    pending.add(1)
+                # Heap indices increase with depth.  Selecting the largest
+                # retained branch therefore reaches repairable leaves before
+                # opening every sibling at the same level.
+                node_index = max(pending)
+                encoded = encode_merkle_probe(MerkleProbe(
+                    node_index, tree.digest(node_index),
+                ))
+                message = network.make_message(
+                    MessageKind.MERKLE_PROBE, requester_id, peer_id,
+                    encoded, len(encoded), step, category="control",
+                    link_key=(
+                        f"merkle-probe|{step}|{requester_id}|{peer_id}|"
+                        f"{node_index}"
+                    ),
+                )
+                self._try_send(
+                    network, message, step, control_budget[requester_id],
+                )
+
+    def _send_iblt_sketches(
+        self, network: UnreliableNetwork, step: int,
+        beliefs: tuple[BeliefMap, ...], positions: tuple[Coordinate, ...],
+        control_budget: list[CommunicationBudget],
+    ) -> None:
+        """Send a fixed-size IBLT of each current versioned-cell set."""
+        phase = step // self.config.repair_interval_steps
+        peer_phase = phase // self.config.iblt_partitions
+        partition = phase % self.config.iblt_partitions
+        for requester_id, belief in enumerate(beliefs):
+            encoded = encode_iblt_sketch(self._iblt_sketch(belief, partition))
+            for peer_id in ordered_digest_peers(
+                requester_id=requester_id, positions=positions, phase=peer_phase,
+                limit=self.config.max_digest_peers,
+            ):
+                message = network.make_message(
+                    MessageKind.IBLT_SKETCH, requester_id, peer_id,
+                    encoded, len(encoded), step, category="control",
+                    link_key=f"iblt-sketch|{step}|{requester_id}|{peer_id}",
+                )
+                self._try_send(network, message, step, control_budget[requester_id])
 
     @staticmethod
     def _interleave_first_attempts_and_retries(
@@ -627,6 +792,11 @@ class PSRClosedLoopRunner:
     def _handle_message(self, network: UnreliableNetwork, message: NetworkMessage, step: int, beliefs: tuple[BeliefMap, ...], outboxes: list[dict[tuple[str, int], _DeliveryTask]], full_repair_outboxes: list[dict[tuple[str, int], _DeliveryTask]], data_budget: list[CommunicationBudget], control_budget: list[CommunicationBudget]) -> int:
         if message.kind is MessageKind.DELTA:
             payload = decode_delta(message.payload, receiver_id=message.receiver_id)
+            if self.policy is ReplicaPolicy.SCUTTLEBUTT_DEPTH:
+                record_scuttle_update(
+                    self._scuttle_archives[message.receiver_id], payload.update,
+                    map_width=self._map_width,
+                )
             applied = beliefs[message.receiver_id].apply_update(payload.update)
             if payload.task_key is not None:
                 encoded = encode_ack(payload.task_key)
@@ -657,6 +827,186 @@ class PSRClosedLoopRunner:
                 response = network.make_message(MessageKind.PATCH, message.receiver_id, message.sender_id, encoded, len(encoded), step, category="repair", link_key=f"patch|{step}|{message.receiver_id}|{message.sender_id}|{tuple(update.update_id for update in patch)}")
                 self._try_send(network, response, step, data_budget[message.receiver_id])
             return 0
+        if message.kind is MessageKind.SCUTTLE_DIGEST:
+            payload = decode_scuttle_digest(message.payload)
+            if len(payload.max_versions) != len(beliefs):
+                raise ValueError("Scuttlebutt digest source count does not match the episode")
+            self._scuttle_digest_exchanges += 1
+            available = scuttle_depth_updates(
+                self._scuttle_archives[message.receiver_id], payload.max_versions,
+                map_width=self._map_width,
+                tie_seed=f"{self.config.link.seed}|{step}|{message.sender_id}|{message.receiver_id}",
+            )
+            max_updates = max(
+                0,
+                (data_budget[message.receiver_id].remaining_bytes - PATCH_HEADER_BYTES)
+                // self.encoder.packet_format.encoded_size_bytes,
+            )
+            selected = available[:max_updates]
+            if selected:
+                encoded = encode_patch(PatchPayload(selected))
+                response = network.make_message(
+                    MessageKind.SCUTTLE_PATCH,
+                    message.receiver_id, message.sender_id,
+                    encoded, len(encoded), step, category="repair",
+                    link_key=(
+                        f"scuttle-patch|{step}|{message.receiver_id}|{message.sender_id}|"
+                        f"{tuple(update.update_id for update in selected)}"
+                    ),
+                )
+                self._try_send(
+                    network, response, step, data_budget[message.receiver_id],
+                )
+            if payload.reply_requested:
+                reply = ScuttleDigest(
+                    scuttle_max_versions(
+                        self._scuttle_archives[message.receiver_id],
+                        source_count=len(beliefs), map_width=self._map_width,
+                    ),
+                    reply_requested=False,
+                )
+                encoded = encode_scuttle_digest(reply)
+                response = network.make_message(
+                    MessageKind.SCUTTLE_DIGEST,
+                    message.receiver_id, message.sender_id,
+                    encoded, len(encoded), step, category="control",
+                    link_key=f"scuttle-digest|{step}|{message.receiver_id}|{message.sender_id}|push",
+                )
+                self._try_send(
+                    network, response, step, control_budget[message.receiver_id],
+                )
+            return 0
+        if message.kind is MessageKind.MERKLE_PROBE:
+            payload = decode_merkle_probe(message.payload)
+            tree = self._merkle_tree(beliefs, message.receiver_id)
+            self._merkle_nodes_compared += 1
+            if tree.digest(payload.node_index) == payload.digest:
+                encoded = encode_merkle_match(MerkleMatch(payload.node_index))
+                response = network.make_message(
+                    MessageKind.MERKLE_MATCH,
+                    message.receiver_id, message.sender_id,
+                    encoded, len(encoded), step, category="control",
+                    link_key=(
+                        f"merkle-match|{step}|{message.receiver_id}|"
+                        f"{message.sender_id}|{payload.node_index}"
+                    ),
+                )
+                self._try_send(
+                    network, response, step, control_budget[message.receiver_id],
+                )
+                return 0
+            if tree.is_leaf(payload.node_index):
+                cell = tree.cell(payload.node_index)
+                update = None if cell is None else update_from_belief(
+                    beliefs[message.receiver_id], cell,
+                )
+                if update is not None:
+                    encoded = encode_patch(PatchPayload((update,)))
+                    response = network.make_message(
+                        MessageKind.MERKLE_PATCH,
+                        message.receiver_id, message.sender_id,
+                        encoded, len(encoded), step, category="repair",
+                        link_key=(
+                            f"merkle-leaf|{step}|{message.receiver_id}|"
+                            f"{message.sender_id}|{payload.node_index}|{update.update_id}"
+                        ),
+                    )
+                    if self._try_send(
+                        network, response, step, data_budget[message.receiver_id],
+                    ):
+                        self._merkle_leaf_repairs += 1
+                else:
+                    encoded = encode_merkle_match(MerkleMatch(payload.node_index))
+                    response = network.make_message(
+                        MessageKind.MERKLE_MATCH,
+                        message.receiver_id, message.sender_id,
+                        encoded, len(encoded), step, category="control",
+                        link_key=(
+                            f"merkle-empty-leaf|{step}|{message.receiver_id}|"
+                            f"{message.sender_id}|{payload.node_index}"
+                        ),
+                    )
+                    self._try_send(
+                        network, response, step, control_budget[message.receiver_id],
+                    )
+                return 0
+            children = tree.children(payload.node_index)
+            encoded = encode_merkle_children(MerkleChildren(
+                payload.node_index,
+                tuple(tree.digest(child) for child in children),
+            ))
+            response = network.make_message(
+                MessageKind.MERKLE_CHILDREN,
+                message.receiver_id, message.sender_id,
+                encoded, len(encoded), step, category="control",
+                link_key=(
+                    f"merkle-children|{step}|{message.receiver_id}|"
+                    f"{message.sender_id}|{payload.node_index}"
+                ),
+            )
+            self._try_send(
+                network, response, step, control_budget[message.receiver_id],
+            )
+            return 0
+        if message.kind is MessageKind.MERKLE_CHILDREN:
+            payload = decode_merkle_children(message.payload)
+            tree = self._merkle_tree(beliefs, message.receiver_id)
+            children = tree.children(payload.node_index)
+            if len(children) != len(payload.digests):
+                raise ValueError("Merkle response fanout does not match the local tree")
+            mismatches = [
+                node_index
+                for node_index, remote_digest in zip(children, payload.digests)
+                if tree.digest(node_index) != remote_digest
+            ]
+            pair = message.receiver_id, message.sender_id
+            pending = self._merkle_pending.setdefault(pair, set())
+            pending.discard(payload.node_index)
+            pending.update(mismatches)
+            return 0
+        if message.kind is MessageKind.MERKLE_MATCH:
+            payload = decode_merkle_match(message.payload)
+            self._merkle_pending.setdefault(
+                (message.receiver_id, message.sender_id), set(),
+            ).discard(payload.node_index)
+            return 0
+        if message.kind is MessageKind.IBLT_SKETCH:
+            requester = decode_iblt_sketch(message.payload)
+            partition = requester.hash_seed - self.config.iblt_hash_seed
+            if not 0 <= partition < self.config.iblt_partitions:
+                raise ValueError("IBLT sketch carries an unknown partition seed")
+            local = self._iblt_sketch(beliefs[message.receiver_id], partition)
+            difference = subtract_iblt(local, requester)
+            success, positive, _ = peel_iblt(difference)
+            self._iblt_decode_attempts += 1
+            self._iblt_decode_successes += int(success)
+            if not success or not positive:
+                return 0
+            updates = tuple(
+                decode_delta(item, receiver_id=0).update
+                for item in sorted(positive)
+            )
+            max_updates = max(
+                0,
+                (data_budget[message.receiver_id].remaining_bytes - PATCH_HEADER_BYTES)
+                // self.encoder.packet_format.encoded_size_bytes,
+            )
+            selected = updates[:max_updates]
+            if selected:
+                encoded = encode_patch(PatchPayload(selected))
+                response = network.make_message(
+                    MessageKind.IBLT_PATCH,
+                    message.receiver_id, message.sender_id,
+                    encoded, len(encoded), step, category="repair",
+                    link_key=(
+                        f"iblt-patch|{step}|{message.receiver_id}|{message.sender_id}|"
+                        f"{tuple(update.update_id for update in selected)}"
+                    ),
+                )
+                self._try_send(
+                    network, response, step, data_budget[message.receiver_id],
+                )
+            return 0
         if message.kind is MessageKind.REPLICA_DIGEST:
             payload = decode_replica_digest(message.payload)
             if payload != encode_replica_digest(replica_digest(beliefs[message.receiver_id])):
@@ -665,8 +1015,27 @@ class PSRClosedLoopRunner:
                     sender_id=message.receiver_id, receiver_id=message.sender_id,
                 )
             return 0
-        if message.kind is MessageKind.PATCH:
+        if message.kind in {
+            MessageKind.PATCH, MessageKind.SCUTTLE_PATCH,
+            MessageKind.MERKLE_PATCH, MessageKind.IBLT_PATCH,
+        }:
             payload = decode_patch(message.payload)
+            if message.kind is MessageKind.SCUTTLE_PATCH:
+                for update in payload.updates:
+                    record_scuttle_update(
+                        self._scuttle_archives[message.receiver_id], update,
+                        map_width=self._map_width,
+                    )
+                self._scuttle_patch_updates += len(payload.updates)
+            elif message.kind is MessageKind.IBLT_PATCH:
+                self._iblt_patch_updates += len(payload.updates)
+            elif message.kind is MessageKind.MERKLE_PATCH:
+                pending = self._merkle_pending.setdefault(
+                    (message.receiver_id, message.sender_id), set(),
+                )
+                tree = self._merkle_tree(beliefs, message.receiver_id)
+                for update in payload.updates:
+                    pending.discard(tree.leaf_node((update.x, update.y)))
             applied = sum(beliefs[message.receiver_id].apply_update(update) for update in payload.updates)
             return int(applied > 0)
         raise ValueError(f"unsupported message kind: {message.kind}")
@@ -679,6 +1048,49 @@ class PSRClosedLoopRunner:
         budget.spend(message.byte_size)
         network.send(message, step)
         return True
+
+    def _merkle_tree(
+        self, beliefs: tuple[BeliefMap, ...], agent_id: int,
+    ) -> MerkleTree:
+        belief = beliefs[agent_id]
+        fingerprint = belief.fingerprint()
+        cached = self._merkle_cache.get(agent_id)
+        if cached is None or cached[0] != fingerprint:
+            cached = fingerprint, MerkleTree(
+                belief, fanout=self.config.merkle_fanout,
+            )
+            self._merkle_cache[agent_id] = cached
+        return cached[1]
+
+    def _iblt_sketch(self, belief: BeliefMap, partition: int) -> IBLTSketch:
+        """Build one MTU-sized spatial shard of the replica set.
+
+        A full 32x32 record set cannot be decoded from a 512-byte IBLT when
+        replicas initially differ widely.  Deterministic modulo partitions
+        retain the original subtract-and-peel algorithm while cycling the
+        entire replica through the same bounded control channel.
+        """
+        if not 0 <= partition < self.config.iblt_partitions:
+            raise ValueError("IBLT partition is outside the configured range")
+        cache_key = id(belief), partition
+        fingerprint = belief.fingerprint()
+        cached = self._iblt_cache.get(cache_key)
+        if cached is not None and cached[0] == fingerprint:
+            return cached[1]
+        items = tuple(
+            encode_delta(DeltaPayload(update), receiver_id=0)
+            for x in range(belief.shape[0])
+            for y in range(belief.shape[1])
+            if (x * belief.shape[1] + y) % self.config.iblt_partitions == partition
+            if (update := update_from_belief(belief, (x, y))) is not None
+        )
+        sketch = build_iblt(
+            items, cell_count=self.config.iblt_cells,
+            hash_count=self.config.iblt_hashes,
+            hash_seed=self.config.iblt_hash_seed + partition,
+        )
+        self._iblt_cache[cache_key] = fingerprint, sketch
+        return sketch
 
     def _paths(self, beliefs: tuple[BeliefMap, ...], positions: tuple[Coordinate, ...], goals: tuple[Coordinate, ...]) -> tuple[tuple[Coordinate, ...], ...]:
         started = process_time()

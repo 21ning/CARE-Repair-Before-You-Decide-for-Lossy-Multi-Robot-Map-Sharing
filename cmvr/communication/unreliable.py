@@ -18,6 +18,14 @@ class MessageKind(str, Enum):
     DIGEST_QUERY = "digest_query"
     REPLICA_DIGEST = "replica_digest"
     PATCH = "patch"
+    SCUTTLE_DIGEST = "scuttle_digest"
+    SCUTTLE_PATCH = "scuttle_patch"
+    MERKLE_PROBE = "merkle_probe"
+    MERKLE_CHILDREN = "merkle_children"
+    MERKLE_MATCH = "merkle_match"
+    MERKLE_PATCH = "merkle_patch"
+    IBLT_SKETCH = "iblt_sketch"
+    IBLT_PATCH = "iblt_patch"
 
 
 class MessageStatus(str, Enum):

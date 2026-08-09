@@ -13,6 +13,10 @@ from struct import Struct
 
 from cmvr.mapping import CellState, MapUpdate
 
+from .external_reconciliation import (
+    HASH_BYTES, IBLT_CHECKSUM_BYTES, IBLT_KEY_BYTES, IBLTCell, IBLTSketch,
+    MerkleChildren, MerkleMatch, MerkleProbe, ScuttleDigest,
+)
 from .replica_protocol import (
     DeltaPayload, DigestQuery, PatchPayload, ReplicaDigest, ReplicaStamp,
 )
@@ -25,6 +29,13 @@ DIGEST_ENTRY_BYTES = 6
 PATCH_HEADER_BYTES = 4
 ACK_BYTES = 8
 REPLICA_DIGEST_BYTES = 16
+SCUTTLE_DIGEST_HEADER_BYTES = 4
+SCUTTLE_DIGEST_ENTRY_BYTES = 5
+MERKLE_PROBE_BYTES = 20
+MERKLE_CHILDREN_HEADER_BYTES = 4
+MERKLE_MATCH_BYTES = 4
+IBLT_HEADER_BYTES = 8
+IBLT_CELL_BYTES = 23
 
 _ACK_REQUESTED = 0x01
 _IS_REPAIR = 0x02
@@ -37,6 +48,14 @@ _DELTA_BODY = Struct("!BBBBBHI")
 _DELTA_CRC = Struct("!H")
 _DIGEST_HEADER = Struct("!BBH12x")
 _PATCH_HEADER = Struct("!BBH")
+_SCUTTLE_HEADER = Struct("!BBH")
+_SCUTTLE_ENTRY = Struct("!BI")
+_MERKLE_PROBE = Struct("!BBH16s")
+_MERKLE_HEADER = Struct("!BBH")
+_IBLT_HEADER = Struct("!BBHI")
+_IBLT_CELL = Struct("!h13s8s")
+
+_SCUTTLE_REPLY_REQUESTED = 0x01
 
 
 class WireFormatError(ValueError):
@@ -208,6 +227,136 @@ def encode_replica_digest(payload: ReplicaDigest) -> bytes:
 def decode_replica_digest(data: bytes) -> bytes:
     _exact_length("replica digest", data, REPLICA_DIGEST_BYTES)
     return data
+
+
+def encode_scuttle_digest(payload: ScuttleDigest) -> bytes:
+    """Encode one maximum version per update origin."""
+    _bounded("Scuttlebutt source count", len(payload.max_versions), 0, 65_535)
+    flags = _SCUTTLE_REPLY_REQUESTED if payload.reply_requested else 0
+    entries = []
+    for source_id, maximum in enumerate(payload.max_versions):
+        _bounded("Scuttlebutt source id", source_id, 0, 255)
+        _bounded("Scuttlebutt maximum version", maximum, 0, 2**32 - 1)
+        entries.append(_SCUTTLE_ENTRY.pack(source_id, maximum))
+    encoded = _SCUTTLE_HEADER.pack(WIRE_VERSION, flags, len(entries)) + b"".join(entries)
+    assert len(encoded) == SCUTTLE_DIGEST_HEADER_BYTES + SCUTTLE_DIGEST_ENTRY_BYTES * len(entries)
+    return encoded
+
+
+def decode_scuttle_digest(data: bytes) -> ScuttleDigest:
+    """Decode a dense, canonically source-ordered Scuttlebutt digest."""
+    if len(data) < SCUTTLE_DIGEST_HEADER_BYTES:
+        raise WireFormatError("Scuttlebutt digest is shorter than its header")
+    version, flags, count = _SCUTTLE_HEADER.unpack(data[:SCUTTLE_DIGEST_HEADER_BYTES])
+    if version != WIRE_VERSION:
+        raise WireFormatError(f"unsupported Scuttlebutt wire version: {version}")
+    if flags & ~_SCUTTLE_REPLY_REQUESTED:
+        raise WireFormatError(f"Scuttlebutt digest contains reserved flags: 0x{flags:02x}")
+    expected = SCUTTLE_DIGEST_HEADER_BYTES + count * SCUTTLE_DIGEST_ENTRY_BYTES
+    _exact_length("Scuttlebutt digest", data, expected)
+    maxima = []
+    for source_id, offset in enumerate(
+        range(SCUTTLE_DIGEST_HEADER_BYTES, expected, SCUTTLE_DIGEST_ENTRY_BYTES)
+    ):
+        encoded_source, maximum = _SCUTTLE_ENTRY.unpack(
+            data[offset:offset + SCUTTLE_DIGEST_ENTRY_BYTES]
+        )
+        if encoded_source != source_id:
+            raise WireFormatError("Scuttlebutt digest sources are not canonical")
+        maxima.append(maximum)
+    return ScuttleDigest(tuple(maxima), bool(flags & _SCUTTLE_REPLY_REQUESTED))
+
+
+def encode_merkle_probe(payload: MerkleProbe) -> bytes:
+    _bounded("Merkle node index", payload.node_index, 1, 65_535)
+    if len(payload.digest) != HASH_BYTES:
+        raise WireFormatError("Merkle probe hash has the wrong width")
+    return _MERKLE_PROBE.pack(WIRE_VERSION, 0, payload.node_index, payload.digest)
+
+
+def decode_merkle_probe(data: bytes) -> MerkleProbe:
+    _exact_length("Merkle probe", data, MERKLE_PROBE_BYTES)
+    version, flags, node_index, digest = _MERKLE_PROBE.unpack(data)
+    if version != WIRE_VERSION or flags:
+        raise WireFormatError("invalid Merkle probe header")
+    if node_index < 1:
+        raise WireFormatError("Merkle node indices start at one")
+    return MerkleProbe(node_index, digest)
+
+
+def encode_merkle_children(payload: MerkleChildren) -> bytes:
+    _bounded("Merkle parent index", payload.node_index, 1, 65_535)
+    _bounded("Merkle child count", len(payload.digests), 1, 255)
+    if any(len(digest) != HASH_BYTES for digest in payload.digests):
+        raise WireFormatError("Merkle child hash has the wrong width")
+    return _MERKLE_HEADER.pack(
+        WIRE_VERSION, len(payload.digests), payload.node_index,
+    ) + b"".join(payload.digests)
+
+
+def decode_merkle_children(data: bytes) -> MerkleChildren:
+    if len(data) < MERKLE_CHILDREN_HEADER_BYTES:
+        raise WireFormatError("Merkle children are shorter than the header")
+    version, child_count, node_index = _MERKLE_HEADER.unpack(
+        data[:MERKLE_CHILDREN_HEADER_BYTES]
+    )
+    if version != WIRE_VERSION or child_count < 1:
+        raise WireFormatError("invalid Merkle children header")
+    if node_index < 1:
+        raise WireFormatError("Merkle node indices start at one")
+    expected = MERKLE_CHILDREN_HEADER_BYTES + child_count * HASH_BYTES
+    _exact_length("Merkle children", data, expected)
+    digests = tuple(
+        data[offset:offset + HASH_BYTES]
+        for offset in range(MERKLE_CHILDREN_HEADER_BYTES, expected, HASH_BYTES)
+    )
+    return MerkleChildren(node_index, digests)
+
+
+def encode_merkle_match(payload: MerkleMatch) -> bytes:
+    _bounded("Merkle match node index", payload.node_index, 1, 65_535)
+    return _MERKLE_HEADER.pack(WIRE_VERSION, 0, payload.node_index)
+
+
+def decode_merkle_match(data: bytes) -> MerkleMatch:
+    _exact_length("Merkle match", data, MERKLE_MATCH_BYTES)
+    version, flags, node_index = _MERKLE_HEADER.unpack(data)
+    if version != WIRE_VERSION or flags or node_index < 1:
+        raise WireFormatError("invalid Merkle match header")
+    return MerkleMatch(node_index)
+
+
+def encode_iblt_sketch(payload: IBLTSketch) -> bytes:
+    _bounded("IBLT hash count", payload.hash_count, 2, 255)
+    _bounded("IBLT cell count", len(payload.cells), payload.hash_count, 65_535)
+    body = b"".join(
+        _IBLT_CELL.pack(cell.count, cell.key_xor, cell.checksum_xor)
+        for cell in payload.cells
+    )
+    encoded = _IBLT_HEADER.pack(
+        WIRE_VERSION, payload.hash_count, len(payload.cells), payload.hash_seed,
+    ) + body
+    assert len(encoded) == IBLT_HEADER_BYTES + IBLT_CELL_BYTES * len(payload.cells)
+    return encoded
+
+
+def decode_iblt_sketch(data: bytes) -> IBLTSketch:
+    if len(data) < IBLT_HEADER_BYTES:
+        raise WireFormatError("IBLT sketch is shorter than its header")
+    version, hash_count, cell_count, hash_seed = _IBLT_HEADER.unpack(data[:IBLT_HEADER_BYTES])
+    if version != WIRE_VERSION:
+        raise WireFormatError(f"unsupported IBLT wire version: {version}")
+    if hash_count < 2 or cell_count < hash_count:
+        raise WireFormatError("invalid IBLT dimensions")
+    expected = IBLT_HEADER_BYTES + IBLT_CELL_BYTES * cell_count
+    _exact_length("IBLT sketch", data, expected)
+    cells = []
+    for offset in range(IBLT_HEADER_BYTES, expected, IBLT_CELL_BYTES):
+        count, key_xor, checksum_xor = _IBLT_CELL.unpack(
+            data[offset:offset + IBLT_CELL_BYTES]
+        )
+        cells.append(IBLTCell(count, key_xor, checksum_xor))
+    return IBLTSketch(hash_count, hash_seed, tuple(cells))
 
 
 def _encode_digest_entry(cell: tuple[int, int], stamp: ReplicaStamp) -> bytes:

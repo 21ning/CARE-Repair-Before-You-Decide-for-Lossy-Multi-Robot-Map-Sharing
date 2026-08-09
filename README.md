@@ -8,6 +8,11 @@ it with a locally derived route-commitment certificate under positive delay.
 The earlier fixed-corridor PSR-UT and rule-based CARE-Lite remain matched
 ablations.
 
+The repository also contains three adapted, published reconciliation
+baselines: Scuttlebutt-Depth, Dynamo-style Merkle anti-entropy, and partitioned
+IBLT set reconciliation. They use the same replicas, planner, lossy link,
+delay, packet budgets, and encoded-byte accounting as CARE.
+
 The final method is the `certificate_repair` policy in code and is labeled
 `CARE` in generated tables; `deadline_aware_repair` is the CARE-Lite ablation.
 
@@ -73,6 +78,15 @@ Retry-All ARQ. See
 [docs/CARE_FINAL_RESULTS.md](docs/CARE_FINAL_RESULTS.md) for all baselines,
 loss rates, paired confidence intervals, sensor-range limits and compute cost.
 
+Against published reconciliation algorithms at the same primary point,
+Scuttlebutt-Depth is strongest at 0.7125/0.7288 CSR and about 80 KB; optimized
+Merkle AE and partitioned IBLT actively repair differences but reach
+0.6713/0.6900 and 0.6813/0.6963. CARE remains higher at 53.25 KB. The complete
+3×3/5×5/7×7 external-baseline table is in
+[docs/EXTERNAL_BASELINES.md](docs/EXTERNAL_BASELINES.md).
+The retained paper tables also include CARE-versus-external and
+external-versus-One-shot paired confidence intervals for every sensing range.
+
 The implementation separates mapping, communication, planning, and environment
 execution so that the protocol can be inspected or replaced independently.
 
@@ -89,6 +103,10 @@ packets later lost by the channel.
 | Patch | `4 + 13M` bytes for M returned cells |
 | ACK | 8 bytes |
 | Replica digest | 16 bytes |
+| Scuttlebutt version digest | `4 + 5R` bytes for R update origins |
+| Merkle probe / match | 20 / 4 bytes |
+| Merkle child response | `4 + 16F` bytes for fanout F |
+| IBLT sketch | `8 + 23C` bytes for C cells (491 bytes at C=21) |
 
 Receivers validate lengths, versions, reserved bits, bounds, and Delta CRCs,
 then apply only updates whose version stamp dominates the local copy. Update
@@ -175,6 +193,25 @@ python scripts/make_care_loss_baseline_artifacts.py \
   --table-directory /tmp/care-tables \
   --figure-directory /tmp/care-figures
 ```
+
+Run and analyze the three published reconciliation baselines on 100 matched
+maps:
+
+```bash
+python scripts/run_psr_suite.py \
+  --config configs/care_external_baselines_fov_100map.yaml \
+  --output-directory /tmp/care-external --workers 32
+python scripts/analyze_external_reconciliation.py \
+  --input-directory /tmp/care-external \
+  --output-directory /tmp/care-external-analysis
+python scripts/make_external_reconciliation_artifacts.py \
+  --analysis-directory /tmp/care-external-analysis \
+  --table-directory paper/tables
+```
+
+Implementation fidelity and the precise adaptations needed for bounded robot
+messages are documented in
+[docs/EXTERNAL_BASELINES.md](docs/EXTERNAL_BASELINES.md).
 
 Additional commands for topology, scale, delay, and ablation configurations
 are documented in [docs/REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md).

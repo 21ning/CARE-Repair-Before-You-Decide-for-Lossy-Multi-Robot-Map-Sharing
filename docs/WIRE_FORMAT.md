@@ -59,6 +59,25 @@ CRC16 and observation-source stamp.
 The sender matches an ACK token against active delivery tasks and rejects an
 in-memory collision instead of removing an ambiguous task.
 
+## Published reconciliation payloads
+
+| Payload | Width | Encoding |
+| --- | ---: | --- |
+| Scuttlebutt digest | `4 + 5R` B | version, push--pull flag, source count, then `(source:1, max-version:4)` |
+| Merkle probe | 20 B | version, flags, 16-bit heap node index, 128-bit node hash |
+| Merkle children | `4 + 16F` B | version, child count, parent index, then F 128-bit hashes |
+| Merkle match | 4 B | version, zero flags and acknowledged node index |
+| IBLT sketch | `8 + 23C` B | version, hash count, cell count, seed, then signed-count/key-XOR/checksum-XOR cells |
+
+Scuttlebutt uses the existing update fields to derive a strictly increasing
+per-origin version, so it does not receive uncharged metadata. The frozen IBLT
+has 21 cells and occupies 491 bytes, within the 512-byte per-step control cap.
+Sixteen deterministic spatial partitions rotate across repair ticks; the
+partition is encoded by the sketch seed and therefore requires no hidden
+side-channel. The frozen Merkle tree uses fanout 16, so one child response is
+260 bytes and remains within the same cap. Merkle and IBLT repair records reuse
+the canonical Patch format.
+
 ## Decode and merge
 
 On delivery, the receiver selects a decoder from the network message kind,
@@ -78,5 +97,6 @@ answered only with cells whose local stamps dominate the requester stamps.
 attempts, including packets subsequently lost by the channel. Data, control,
 and repair bytes are also recorded separately.
 
-Codec and transport invariants are covered by `tests/test_wire_codec.py` and
+Codec and transport invariants are covered by `tests/test_wire_codec.py`,
+`tests/test_external_reconciliation.py`, and
 `tests/test_unreliable_network.py`.

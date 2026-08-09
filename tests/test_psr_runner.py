@@ -78,6 +78,19 @@ def test_runner_rejects_instances_outside_digest_bit_widths() -> None:
         ).run(oversized)
 
 
+def test_external_sketches_must_fit_the_shared_control_budget() -> None:
+    with pytest.raises(ValueError, match="IBLT sketch exceeds"):
+        PSRClosedLoopRunner(
+            policy=ReplicaPolicy.IBLT_RECONCILIATION,
+            config=replace(_config(), control_bytes_per_agent_per_step=490),
+        ).run(_instance())
+    with pytest.raises(ValueError, match="Merkle child response exceeds"):
+        PSRClosedLoopRunner(
+            policy=ReplicaPolicy.MERKLE_ANTI_ENTROPY,
+            config=replace(_config(), control_bytes_per_agent_per_step=259),
+        ).run(_instance())
+
+
 def test_retry_all_uses_ack_control_traffic_and_no_comm_uses_none() -> None:
     retry = PSRClosedLoopRunner(policy=ReplicaPolicy.RETRY_ALL_ARQ, config=_config(loss=0.0)).run(_instance())
     none = PSRClosedLoopRunner(policy=ReplicaPolicy.NO_COMMUNICATION, config=_config(loss=0.0)).run(_instance())
@@ -184,6 +197,57 @@ def test_mismatch_triggered_full_repair_uses_only_explicit_replica_state() -> No
     result = PSRClosedLoopRunner(
         policy=ReplicaPolicy.MISMATCH_TRIGGERED_FULL_REPAIR, config=_config(loss=0.0),
     ).run(_instance())
+    assert result.network_summary["attempted_control_bytes"] > 0
+    assert result.network_summary["attempted_repair_bytes"] > 0
+
+
+def test_scuttlebutt_depth_runs_as_version_gossip_without_hidden_one_shot_data() -> None:
+    config = replace(
+        _config(loss=0.0), repair_interval_steps=1,
+        max_digest_peers=1, data_bytes_per_agent_per_step=4459,
+    )
+    first = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.SCUTTLEBUTT_DEPTH, config=config,
+    ).run(_instance())
+    second = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.SCUTTLEBUTT_DEPTH, config=config,
+    ).run(_instance())
+
+    assert first == second
+    assert first.scuttle_digest_exchanges > 0
+    assert first.scuttle_patch_updates > 0
+    assert first.network_summary["attempted_data_bytes"] == 0
+    assert first.network_summary["attempted_control_bytes"] > 0
+    assert first.network_summary["attempted_repair_bytes"] > 0
+
+
+def test_merkle_anti_entropy_reaches_and_repairs_mismatching_leaves() -> None:
+    result = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.MERKLE_ANTI_ENTROPY,
+        config=replace(
+            _config(loss=0.3), repair_interval_steps=1,
+            max_digest_peers=1, data_bytes_per_agent_per_step=4459,
+        ),
+    ).run(_instance())
+
+    assert result.merkle_nodes_compared > 0
+    assert result.merkle_leaf_repairs > 0
+    assert result.network_summary["attempted_control_bytes"] > 0
+    assert result.network_summary["attempted_repair_bytes"] > 0
+
+
+def test_iblt_reconciliation_decodes_and_repairs_small_replica_differences() -> None:
+    result = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.IBLT_RECONCILIATION,
+        config=replace(
+            _config(loss=0.0), repair_interval_steps=1,
+            max_digest_peers=1, data_bytes_per_agent_per_step=4459,
+        ),
+    ).run(_instance())
+
+    assert result.iblt_decode_attempts > 0
+    assert result.iblt_decode_successes > 0
+    assert result.iblt_patch_updates > 0
     assert result.network_summary["attempted_control_bytes"] > 0
     assert result.network_summary["attempted_repair_bytes"] > 0
 

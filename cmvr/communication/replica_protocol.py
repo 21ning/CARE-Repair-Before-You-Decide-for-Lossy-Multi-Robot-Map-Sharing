@@ -38,6 +38,9 @@ class ReplicaPolicy(str, Enum):
     UTILITY_TRIGGERED_REPAIR = "utility_triggered_repair"
     DEADLINE_AWARE_REPAIR = "deadline_aware_repair"
     CERTIFICATE_REPAIR = "certificate_repair"
+    SCUTTLEBUTT_DEPTH = "scuttlebutt_depth"
+    MERKLE_ANTI_ENTROPY = "merkle_anti_entropy"
+    IBLT_RECONCILIATION = "iblt_reconciliation"
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,12 @@ class PSRConfig:
     max_digest_peers: int | None = None
     certificate_max_cells: int = 8
     certificate_uncertainty_order: int = 2
+    iblt_cells: int = 21
+    iblt_hashes: int = 3
+    iblt_hash_seed: int = 20260809
+    iblt_partitions: int = 16
+    merkle_fanout: int = 16
+    merkle_session_steps: int = 4
     link: LinkConfig = field(default_factory=LinkConfig)
 
     def __post_init__(self) -> None:
@@ -76,6 +85,18 @@ class PSRConfig:
             raise ValueError("certificate_max_cells must be positive")
         if not 1 <= self.certificate_uncertainty_order <= self.certificate_max_cells:
             raise ValueError("certificate uncertainty order must lie in [1, max cells]")
+        if self.iblt_cells < self.iblt_hashes or self.iblt_hashes < 2:
+            raise ValueError("IBLT requires cells >= hashes >= 2")
+        if not 0 <= self.iblt_hash_seed <= 2**32 - 1:
+            raise ValueError("IBLT hash seed must fit 32 bits")
+        if self.iblt_partitions < 1:
+            raise ValueError("IBLT partition count must be positive")
+        if self.iblt_hash_seed + self.iblt_partitions - 1 > 2**32 - 1:
+            raise ValueError("IBLT partition seeds must fit 32 bits")
+        if not 2 <= self.merkle_fanout <= 255:
+            raise ValueError("Merkle fanout must lie in [2, 255]")
+        if self.merkle_session_steps < 1:
+            raise ValueError("Merkle session length must be positive")
 
     def max_digest_cells_per_message(self) -> int:
         """Largest digest fitting one sender's control budget.

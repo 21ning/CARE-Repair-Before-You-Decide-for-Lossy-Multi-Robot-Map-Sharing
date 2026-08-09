@@ -19,7 +19,7 @@ versioned anti-entropy protocol that computes a minimum decision certificate.
 CARE enumerates a bounded sparse occupancy-scenario family and solves an exact
 hitting-set problem whose queried cells distinguish all still-repairable action
 classes. A route-commitment certificate accounts for query--patch latency. We
-evaluate 30,800 episodes, each condition using 100 physically distinct maps
+evaluate 52,400 episodes, each condition using 100 physically distinct maps
 paired across methods. In the primary 5$\times$5-sensing condition at 30\%
 loss, CARE improves completion success from 0.6713 to 0.7362 with A* and from
 0.6900 to 0.7688 with D* Lite, adding only 5.63/5.47~KB over one-shot sharing.
@@ -46,7 +46,10 @@ time.
 We study this explicit-state recovery problem rather than replace the motion
 planner or learn a latent communication policy. Learned communication systems
 such as DCC and SCRIMP optimize different representations and coordination
-objectives \cite{ma2021dcc,wang2023scrimp}. Here every method shares the same
+objectives \cite{ma2021dcc,wang2023scrimp}. Generic replica reconciliation
+instead tracks version progress, localizes differences with Merkle trees, or
+decodes compressed set differences
+\cite{vanrenesse2008scuttlebutt,decandia2007dynamo,goodrich2011iblt}. Here every method shares the same
 cell codec, map, planner interface, loss trace, delay and byte accounting; only
 replica recovery changes. We also repeat the main comparison with both A* and
 incremental D* Lite, separating the communication claim from a planner's cache
@@ -56,8 +59,9 @@ Our contributions are: (i) a codec-priced optimization with an exact
 scenario-separation condition; (ii) a dual certificate combining action
 identifiability with a deadline derived from route commitment and measured
 query--patch latency; (iii) a bounded online solver with explicit complexity
-and guarantee limits; and (iv) a 30,800-episode evaluation with paired
-map-cluster inference, eight baselines, full-method ablations, two planners,
+and guarantee limits; and (iv) a 52,400-episode evaluation with paired
+map-cluster inference, three published reconciliation baselines, controlled
+baselines and full-method ablations, two planners,
 three sensing ranges, loss/delay sweeps, density/topology/scale extensions, and
 random-map negative controls.
 
@@ -65,8 +69,9 @@ random-map negative controls.
 Each robot maintains a versioned occupancy map $M_i^t$. A deterministic stamp
 orders version, observation time, sender and state tie break; an incoming cell
 is merged only when its stamp dominates the local copy. Normal observations
-are directed one-shot deltas. Data, query, patch, acknowledgement and digest
-packets traverse the same directed lossy channel.
+are directed one-shot deltas, except in the Scuttlebutt adaptation where its
+version-gossip exchange is the dissemination mechanism. Data, query, patch,
+acknowledgement and digest packets traverse the same directed lossy channel.
 
 The simulator uses an executable fixed-width wire format. A cell delta is 13
 bytes, a query over $n$ stamped cells is $16+6n$ bytes, a patch returning $m$
@@ -128,6 +133,13 @@ ten policies and both planners. Delay uses 3,200 episodes. The remaining
 12,000 episodes cover matched full-method ablations, obstacle density,
 decision topology, 4--32 robots, and random maps as negative controls.
 
+A 21,600-episode external-baseline matrix crosses the three sensing ranges,
+six losses, both planners and Scuttlebutt-Depth, Dynamo-style 16-ary Merkle
+anti-entropy, 16-partition IBLT, One-shot, Retry-All and CARE. Scuttlebutt uses
+per-origin version maxima and depth ordering; Merkle uses acknowledged,
+loss-retried depth-first traversal; IBLT rotates 491-byte sketches through a
+complete peer session. None receives path, goal or certificate information.
+
 We additionally record the peer's first observation of the critical obstacle,
 the seeker's first local observation, route commitment, the signed repair
 window, and candidate-cap saturation. Conditional timing means always include
@@ -143,6 +155,11 @@ CARE saves 101.20/101.75~KB but yields 0.0225/0.0175 lower success. Thus CARE
 occupies a low-traffic point rather than the maximum-reliability endpoint.
 Compared with PSR-UT and CARE-Lite, CARE is statistically indistinguishable in
 success while saving about 9.5 and 3.8~KB, respectively.
+Among published methods, Scuttlebutt is strongest: CARE improves over it by
+$+0.0238$ ($[+0.0088,+0.0387]$) with A* and $+0.0400$
+($[+0.0225,+0.0575]$) with D* Lite while saving 26.90/27.54~KB. CARE also
+exceeds Merkle by 0.0650/0.0788 and IBLT by 0.0550/0.0725, saving
+19.93--99.62~KB.
 
 \begin{table}[t]
 \caption{Primary 5$\times$5 condition at 30\% loss (100 maps).}
@@ -155,13 +172,16 @@ Planner & Method & CSR & Attempted KB \\
 \midrule
 A* & One-shot & .6713 & 47.62 \\
 A* & Retry-All ARQ & .7588 & 154.45 \\
-A* & Periodic Full & .7488 & 296.60 \\
-A* & PSR-UT & .7350 & 62.71 \\
-A* & CARE-Lite & .7400 & 57.00 \\
-A* & CARE & \textbf{.7362} & \textbf{53.25} \\
+A* & Scuttlebutt-Depth & .7125 & 80.15 \\
+A* & Merkle AE & .6713 & 73.18 \\
+A* & Partitioned IBLT & .6813 & 152.80 \\
+A* & CARE & \textbf{.7362} & 53.25 \\
 D* Lite & One-shot & .6900 & 47.78 \\
 D* Lite & Retry-All ARQ & .7863 & 155.00 \\
-D* Lite & CARE & \textbf{.7688} & \textbf{53.25} \\
+D* Lite & Scuttlebutt-Depth & .7288 & 80.80 \\
+D* Lite & Merkle AE & .6900 & 73.56 \\
+D* Lite & Partitioned IBLT & .6963 & 152.87 \\
+D* Lite & CARE & \textbf{.7688} & 53.25 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -183,6 +203,10 @@ repair cannot invent that context. Candidate-cap hit rate falls from 0.478 to
 0.366 and 0.144 as sensing expands. In the controlled geometry, the peer first
 observes the critical obstacle at step zero and commitment occurs at step two
 for all footprints, isolating context from deadline length.
+At 7$\times$7, A* CARE reaches 0.9375 versus 0.8712 Scuttlebutt, 0.8562
+IBLT and 0.8400 Merkle. Merkle still transmits 23.5 mismatching leaves per
+episode, while IBLT decodes 87.5\% of sketches at 5$\times$5; hence their
+task gap is not an inactive-implementation artifact.
 
 Delay provides a second causal boundary. A* CARE success at one-way delays
 0/1/2/4 is 0.7362/0.6913/0.6475/0.6525, while the signed repair window is
@@ -211,7 +235,8 @@ exactness is a measured cost and CARE-Lite remains a practical approximation.
 CARE turns decision-critical replica repair into a codec-priced constrained
 communication algorithm. Exact scenario separation produces a minimum action
 certificate and route commitment supplies its deadline. Matched A* and D* Lite
-results support a low-traffic reliability operating point, while sensing,
+results, including three published reconciliation algorithms, support a
+low-traffic reliability operating point, while sensing,
 delay, topology, random-map and compute controls identify where the mechanism
 does and does not help. Reliable ARQ remains the higher-traffic reliability
 endpoint rather than a target CARE claims to dominate.

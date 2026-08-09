@@ -2,7 +2,7 @@
 
 ## Frozen evidence
 
-All planned runs are complete: 30,800 episodes. Every policy-condition uses
+All planned runs are complete: 52,400 episodes. Every policy-condition uses
 100 physically distinct layouts, not merely 100 different seed labels. The
 same layout and deterministic packet-loss trace are shared by paired methods.
 Means and sample SDs use the 100 map-level observations; confidence intervals
@@ -15,6 +15,7 @@ methods within a layout/loss trace before resampling.
 | Observation range | 6,000 | 3×3/5×5/7×7 × 10 methods × A*/D* Lite |
 | Link delay | 3,200 | delays 0/1/2/4 × 4 methods × A*/D* Lite |
 | Ablation and extension | 12,000 | density, random negative controls, q/cap/cadence, topology, scale |
+| Published reconciliation/FOV | 21,600 | 3 sensing ranges × 6 losses × 6 methods × A*/D* Lite |
 
 Independent reruns of the overlapping 5×5 conditions agree on every
 non-timing output field (`care_cross_study_reproducibility.json`).
@@ -38,6 +39,17 @@ Paired CARE minus One-shot is +0.0650 CSR [0.0488, 0.0813] with A* and
 0.0225/0.0175 CSR to Retry-All but saves 101.20/101.75 KB. Relative to PSR-UT,
 CSR is statistically indistinguishable while CARE saves about 9.5 KB. CARE is
 therefore a low-traffic reliability point, not the absolute-CSR winner.
+
+### Published external reconciliation baselines
+
+A separate matrix adds Scuttlebutt-Depth, Dynamo-style 16-ary Merkle
+anti-entropy, and 16-partition IBLT reconciliation across all three sensing
+ranges and both planners. At the primary point, A* CARE versus
+Scuttlebutt/Merkle/IBLT is respectively +0.0238 `[0.0088, 0.0387]`, +0.0650
+`[0.0500, 0.0813]`, and +0.0550 `[0.0387, 0.0712]` CSR, while saving
+26.90/19.93/99.55 KB. D* Lite gives the same ordering. Merkle averages 23.51
+leaf repairs and IBLT decodes 87.51% of received sketches, so their weaker CSR
+is not caused by an inactive implementation.
 
 ## Packet loss and delay
 

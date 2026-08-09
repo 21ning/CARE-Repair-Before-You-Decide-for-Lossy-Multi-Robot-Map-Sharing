@@ -5,6 +5,7 @@
 | The query is minimum encoded size in the declared scenario family. | Exact hitting-set enumeration, theorem and unit tests. | Proven for uniform 6-byte entries, q≤2 and the capped candidate set; not an unbounded robust-map theorem. |
 | Results use 100 independent physical maps. | Seed-free `layout_fingerprint`; analyzers reject duplicates; topology/density/scale 100-layout tests. | Supported. A seed label alone no longer counts as independence. |
 | CARE improves over One-shot in the 5×5 primary task. | A*: +0.0650 [0.0488, 0.0813]; D*: +0.0788 [0.0612, 0.0963]. | Supported with paired maps/traces. |
+| CARE improves over published generic reconciliation baselines. | At 5×5, A* CARE minus Scuttlebutt/Merkle/IBLT is +0.0238/+0.0650/+0.0550; all paired 95% CIs are positive. | Supported by the 21,600-episode external/FOV matrix. |
 | CARE is traffic-efficient versus reliable recovery. | Saves 101.20/101.75 KB versus Retry-All at a 0.0225/0.0175 CSR cost. | Supported as a tradeoff, not dominance. |
 | CARE retains PSR-UT/CARE-Lite reliability with less traffic. | Paired CSR CIs include zero; savings are about 9.5/3.8 KB. | Supported at 30% loss and zero delay. |
 | Benefits persist across sensing ranges. | CARE gain is 0.0000, +0.0650, +0.0975 at 3×3/5×5/7×7 with A*. | Supported only for 5×5 and 7×7. **Rejected at 3×3**, where map context is the bottleneck. |
@@ -18,7 +19,7 @@
 
 ## Freeze checklist
 
-- 30,800/30,800 planned episodes complete;
+- 52,400/52,400 planned episodes complete;
 - 100 seed-free physical layout fingerprints in every condition;
 - A*/D* Lite, six loss rates, delay, FOV, density, topology and scale retained;
 - every ablation paired with full CARE on the same 100 layouts/traces;

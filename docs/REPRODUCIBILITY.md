@@ -29,9 +29,14 @@ python scripts/run_psr_suite.py \
 
 python scripts/run_care_extension_matrix.py \
   --output-directory /tmp/care-extensions --workers 32
+
+python scripts/run_psr_suite.py \
+  --config configs/care_external_baselines_fov_100map.yaml \
+  --output-directory /tmp/care-external --workers 32
 ```
 
-Expected episode counts are respectively 9,600, 6,000, 3,200 and 12,000.
+Expected episode counts are respectively 9,600, 6,000, 3,200, 12,000 and
+21,600.
 
 ## Analyze and generate paper assets
 
@@ -60,6 +65,13 @@ python scripts/analyze_care_extension_matrix.py \
 python scripts/make_care_extension_artifacts.py \
   --analysis-directory /tmp/care-extension-analysis \
   --table-directory paper/tables --figure-directory paper/figures
+
+python scripts/analyze_external_reconciliation.py \
+  --input-directory /tmp/care-external \
+  --output-directory /tmp/care-external-analysis
+python scripts/make_external_reconciliation_artifacts.py \
+  --analysis-directory /tmp/care-external-analysis \
+  --table-directory paper/tables
 ```
 
 Audit overlapping independent reruns:

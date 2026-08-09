@@ -8,12 +8,15 @@ CARE 的网络层只传输真实固定宽度 `bytes`，不直接传 Python 对�
 
 - Cell Delta、Digest Query、Patch、ACK、Replica Digest 的长度分别为
   13 B、`16+6N` B、`4+13M` B、8 B、16 B；
+- Scuttlebutt digest 为 `4+5R` B，Merkle probe/match 为 20/4 B，16-ary
+  child response 为 260 B，21-cell IBLT sketch 为 491 B；
 - 解码器拒绝错误长度、未知 wire version、非零保留位、越界字段和损坏的
   Delta CRC；
 - 解码后的重复/转发 update 继续使用确定性的 version stamp 合并规则；
 - 字段范围覆盖冻结实验的 64×64 地图、32 agents 和 64 steps；
-- codec、transport、runner 与周期同步均由自动测试覆盖；
-- 30,800-episode 最终矩阵中所有策略使用同一 codec 和计费路径。
+- codec、transport、runner、周期同步和三个 published reconciliation
+  baseline 均由自动测试覆盖；
+- 52,400-episode 最终证据中所有策略使用同一 codec 和计费路径。
 
 运行审计测试：
 
