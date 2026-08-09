@@ -1,0 +1,8 @@
+weights/
+results/
+outputs/
+build/
+renders/
+__pycache__/
+*.py[cod]
+.pytest_cache/

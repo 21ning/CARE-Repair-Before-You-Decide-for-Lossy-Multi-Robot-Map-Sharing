@@ -1,0 +1,4 @@
+numpy>=1.23,<2.0
+pogema==1.1.1
+PyYAML>=6.0,<7.0
+matplotlib>=3.7,<4.0
