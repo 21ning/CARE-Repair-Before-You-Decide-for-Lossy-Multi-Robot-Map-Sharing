@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze the preregistered 100-map deadline-aware CARE planner matrix."""
+"""Analyze the preregistered 100-map deadline-aware CARE-Lite planner matrix."""
 
 from __future__ import annotations
 
@@ -187,7 +187,7 @@ def analyze(input_directory: Path, output_directory: Path) -> dict:
     (output_directory / "gate_decision.json").write_text(json.dumps(decision, indent=2) + "\n")
 
     lines = [
-        "# Deadline-aware CARE: paired 100-map cross-planner result", "",
+        "# Deadline-aware CARE-Lite: paired 100-map cross-planner result", "",
         "Differences are `deadline_aware_repair - comparator` on identical maps and link traces.", "",
         "| Planner | Gate | CSR vs PSR-UT | Bytes vs PSR-UT | CSR vs One-shot |", "|---|---:|---:|---:|---:|",
     ]

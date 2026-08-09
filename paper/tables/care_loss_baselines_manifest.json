@@ -1,0 +1,19 @@
+{
+  "complete": true,
+  "episodes": 9600,
+  "independent_maps_per_condition": 100,
+  "unique_map_fingerprints": 100,
+  "planners": ["astar", "dstar_lite"],
+  "loss_probabilities": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5],
+  "policies": [
+    "one_shot_delta",
+    "retry_all_arq",
+    "path_weighted_arq",
+    "periodic_full_sync",
+    "mismatch_triggered_full_repair",
+    "utility_triggered_repair",
+    "deadline_aware_repair",
+    "certificate_repair"
+  ],
+  "confidence_interval": "20,000-draw cluster bootstrap over independent maps; paired comparisons preserve the matched map and loss trace"
+}

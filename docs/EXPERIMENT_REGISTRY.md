@@ -15,6 +15,8 @@ submission repository; the final derived tables and figures are retained in
 | PSR-UT-topology-001 | T-junction, asymmetric-fork, narrow-bypass decision geometries | five primary policies | complete, 1,500 episodes | `paper/tables/psr_ut_ablation_extension_summary.md` |
 | PSR-UT-codec-audit-001 | Binary codec integration rerun on the paired action-trigger condition | Action-triggered repair, PSR-UT | complete, 200 episodes | `docs/WIRE_CODEC_AUDIT.md` |
 | CARE-deadline-planner-001 | 4 delays $\times$ 2 planners on the primary decision geometry | One-shot, Action-triggered, PSR-UT, CARE | complete, 3,200 episodes | `docs/CARE_GATE_RESULT.md`, `paper/tables/care_cross_planner_primary.*`, `paper/figures/care_cross_planner_delay.png` |
+| CARE-certificate-gate-001 | Exact scenario certificate and positive-delay dual-certificate promotion gate | One-shot, PSR-UT, CARE-Lite, CARE | complete, 3,200 episodes | `docs/CARE_ALGORITHM.md`, `docs/CARE_FINAL_RESULTS.md` |
+| CARE-loss-baselines-001 | 6 loss rates $\times$ 8 policies $\times$ A*/D* Lite | One-shot, Retry-All, Path-Weighted, Periodic Full, Mismatch Full, PSR-UT, CARE-Lite, CARE | complete, 9,600 episodes / 100 unique fingerprints | `paper/tables/care_loss_baselines_manifest.json`, `care_loss_baselines_primary.*`, `care_loss_baselines_paired.*`, `paper/figures/care_loss_baseline_sweep.*` |
 
 The obsolete Conditional-CMVR/Oracle direction, preliminary PSR variants,
 EPOM training artifacts, and their results are not part of this submission.

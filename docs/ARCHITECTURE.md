@@ -16,7 +16,7 @@ flowchart LR
   E --> O[results.csv / traces.csv / instances]
   O --> A[分析脚本：均值、标准差、配对 bootstrap CI]
   A --> T[paper/tables 与 paper/figures]
-  T --> X[paper/psr_icassp_draft.tex]
+  T --> X[paper/care_icassp_draft.tex]
 ```
 
 每张地图有一个 `layout_seed` 和一个匹配的 `network_seed`。同一 map
@@ -30,7 +30,7 @@ flowchart LR
 | `cmvr/mapping/` | `BeliefMap`、cell stamp、局部观测编码、增量更新 | 环境将观测写入本地副本；网络交付的版本化 update 也在这里合并。 |
 | `cmvr/planning/` | 统一 Planner 接口、确定性 A*、增量 D* Lite | runner 为每个 receiver 分别维护乐观/悲观规划器；CARE 只消费路径，不依赖具体搜索实现。 |
 | `cmvr/communication/unreliable.py` | 有向、固定 seed 的丢包/延迟信道与 event log | 所有 delta、digest、ACK 和 repair 都经过同一对象；输出按 data/control/repair 分项计费。 |
-| `cmvr/communication/replica_protocol.py` | policy、digest、deadline certificate 和 patch payload | 从两条 receiver-local 路径与本地 belief 计算 deadline 和最小 witness set；不访问真值地图或 peer 内存。 |
+| `cmvr/communication/replica_protocol.py` | policy、digest、scenario/deadline certificate 和 patch payload | 枚举有界稀疏场景并精确求解最小 hitting set；同时计算 route deadline；不访问真值地图或 peer 内存。 |
 | `cmvr/communication/wire.py` | 固定宽度二进制 codec、CRC、字段边界和精确长度 | runner 在发送前编码、到达后解码；network 只接受 `bytes` 且强制 `len(payload) == byte_size`。 |
 | `cmvr/env/instance.py`、`structured_instances.py` | 随机与决策关键拓扑实例 | 为所有配对策略生成同一个可指纹化实例。 |
 | `cmvr/env/psr_runner.py` | 唯一的 closed-loop 执行器 | 编排观测、A*、通信、交付、修复与 POGEMA 动作，并生成 episode 级与 step 级指标。 |
@@ -48,7 +48,8 @@ instance/loss trace。差别只在“何时修复”与“修复哪里”。
 | Periodic Full (K=4) | 每四步 | 已知全副本的公平轮转 chunk |
 | Mismatch Full | replica digest 不一致时 | 全副本 chunk |
 | PSR-UT | 本地乐观/悲观下一动作不同且在 corridor 内 | 接收端当前路径 corridor |
-| CARE | 两条路径存在歧义且 query--patch 可在首次进入未知 cell 前返回 | 分叉到重合之间的一跳 action-graph 未知 influence set |
+| CARE-Lite | 两条路径存在歧义且 query--patch 可在首次进入未知 cell 前返回 | 分叉到重合之间的一跳 action-graph 未知 influence set |
+| CARE | 存在仍可及时修复的动作冲突场景对 | 精确最小 scenario hitting set；正延迟时并入 route-commitment certificate |
 
 Periodic Full 在非同步步发送普通 one-shot delta；同步步用同一 data cap
 优先发送完整已知副本的一个 chunk。chunk 同时轮转 cell 和 receiver，避免
@@ -77,6 +78,9 @@ version、长度、保留位、字段边界与 Delta CRC，再重建 update 并�
 | `analyze_psr_topology_variants.py` | 三个 topology 根目录 | topology extension 汇总 |
 | `analyze_care_deadline_cross_planner.py` | CARE 的 3,200-episode 完整矩阵 | 跨规划器均值、标准差、CI、paired effect、deadline diagnostics 和 gate |
 | `make_care_deadline_artifacts.py` | CARE analysis | 跨规划器主表和 delay figure |
+| `analyze_care_certificate.py` | 双证书 3,200-episode gate | 配对 non-inferiority、traffic 和 CPU promotion gate |
+| `analyze_care_loss_baselines.py` | 9,600-episode loss/baseline matrix | map-cluster CI、paired effect size 和 Pareto frontier |
+| `make_care_loss_baseline_artifacts.py` | final audited analysis | 最终 baseline 表和 loss/traffic figure |
 | `make_psr_ut_paper_artifacts.py` | formal summary，及可选 periodic summary | 论文主表、Pareto 图、loss 曲线和 two-gate 示意图 |
 
 所有 runner 拒绝覆盖非空输出目录。这是为了防止新运行静默混入已冻结的

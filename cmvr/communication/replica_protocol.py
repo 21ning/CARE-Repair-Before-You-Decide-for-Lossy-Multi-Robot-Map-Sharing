@@ -10,6 +10,7 @@ flow.
 from __future__ import annotations
 
 from hashlib import sha256
+from itertools import combinations
 from math import exp
 from dataclasses import dataclass, field
 from enum import Enum
@@ -36,6 +37,7 @@ class ReplicaPolicy(str, Enum):
     ACTION_TRIGGERED_REPAIR = "action_triggered_repair"
     UTILITY_TRIGGERED_REPAIR = "utility_triggered_repair"
     DEADLINE_AWARE_REPAIR = "deadline_aware_repair"
+    CERTIFICATE_REPAIR = "certificate_repair"
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,8 @@ class PSRConfig:
     replica_digest_bytes: int = 16
     path_weighted_sigma: float = 1.0
     max_digest_peers: int | None = None
+    certificate_max_cells: int = 8
+    certificate_uncertainty_order: int = 2
     link: LinkConfig = field(default_factory=LinkConfig)
 
     def __post_init__(self) -> None:
@@ -68,6 +72,10 @@ class PSRConfig:
             raise ValueError("path_weighted_sigma must be positive")
         if self.max_digest_peers is not None and self.max_digest_peers < 1:
             raise ValueError("max_digest_peers must be positive when set")
+        if self.certificate_max_cells < 1:
+            raise ValueError("certificate_max_cells must be positive")
+        if not 1 <= self.certificate_uncertainty_order <= self.certificate_max_cells:
+            raise ValueError("certificate uncertainty order must lie in [1, max cells]")
 
     def max_digest_cells_per_message(self) -> int:
         """Largest digest fitting one sender's control budget.
@@ -115,6 +123,103 @@ class DecisionRepairPlan:
     decision_slack_steps: int | None
     round_trip_steps: int
     cells: tuple[Coordinate, ...]
+
+
+@dataclass(frozen=True)
+class ScenarioCertificate:
+    """Exact minimum query separating all deadline-feasible scenario pairs."""
+
+    cells: tuple[Coordinate, ...]
+    candidate_cells: tuple[Coordinate, ...]
+    scenario_count: int
+    conflicting_pairs: int
+    feasible_pairs: int
+    infeasible_pairs: int
+
+
+def decision_candidate_cells(
+    belief: BeliefMap, optimistic_path: tuple[Coordinate, ...], *,
+    max_horizon: int, max_candidates: int,
+) -> tuple[Coordinate, ...]:
+    """Unknown action-graph vertices ordered by earliest path influence."""
+    priority: dict[Coordinate, tuple[int, int, int, int]] = {}
+    for path_index, (x, y) in enumerate(optimistic_path[1:max_horizon + 1], start=1):
+        for distance, cell in (
+            (0, (x, y)), (1, (x - 1, y)), (1, (x + 1, y)),
+            (1, (x, y - 1)), (1, (x, y + 1)),
+        ):
+            if not belief.in_bounds(*cell) or int(belief.occupancy[cell]) >= 0:
+                continue
+            key = path_index, distance, cell[0], cell[1]
+            priority[cell] = min(priority.get(cell, key), key)
+    return tuple(sorted(priority, key=priority.__getitem__)[:max_candidates])
+
+
+def scenario_blocked_sets(
+    candidates: tuple[Coordinate, ...], *, uncertainty_order: int,
+) -> tuple[frozenset[Coordinate], ...]:
+    """Canonical q-sparse occupancy scenarios, including all-free."""
+    if uncertainty_order < 0:
+        raise ValueError("uncertainty_order must be non-negative")
+    if len(set(candidates)) != len(candidates):
+        raise ValueError("candidate cells must be unique")
+    return tuple(
+        frozenset(blocked)
+        for order in range(min(uncertainty_order, len(candidates)) + 1)
+        for blocked in combinations(candidates, order)
+    )
+
+
+def minimum_scenario_certificate(
+    candidates: tuple[Coordinate, ...],
+    scenario_paths: dict[frozenset[Coordinate], tuple[Coordinate, ...]],
+    *, round_trip_steps: int,
+) -> ScenarioCertificate:
+    """Solve the scenario-separating query problem exactly by enumeration.
+
+    Each pair of occupancy scenarios whose planned action sequences differ is
+    distinguishable only by querying a cell in their symmetric difference.
+    Pairs whose first divergence precedes the query--patch round trip are
+    recorded but cannot be repaired by the current request.  Among feasible
+    pairs, exhaustive cardinality-ordered enumeration returns the deterministic
+    candidate-order-first minimum hitting set. Candidate sets are deliberately
+    capped, so this exact solver is bounded by ``2^|candidates|``.
+    """
+    if round_trip_steps < 0:
+        raise ValueError("round_trip_steps must be non-negative")
+    if len(set(candidates)) != len(candidates):
+        raise ValueError("candidate cells must be unique")
+    scenario_cells = set().union(*scenario_paths) if scenario_paths else set()
+    if scenario_cells - set(candidates):
+        raise ValueError("scenario contains a cell outside the candidate set")
+    constraints: list[frozenset[Coordinate]] = []
+    conflicts = infeasible = 0
+    scenarios = tuple(scenario_paths)
+    for left_index, left in enumerate(scenarios):
+        for right in scenarios[left_index + 1:]:
+            divergence = first_path_divergence(
+                scenario_paths[left], scenario_paths[right],
+            )
+            if divergence is None:
+                continue
+            conflicts += 1
+            difference = left.symmetric_difference(right)
+            if divergence < round_trip_steps:
+                infeasible += 1
+            elif difference:
+                constraints.append(difference)
+    selected: tuple[Coordinate, ...] = ()
+    for size in range(len(candidates) + 1):
+        selected = next((
+            subset for subset in combinations(candidates, size)
+            if all(any(cell in constraint for cell in subset) for constraint in constraints)
+        ), ())
+        if selected or not constraints:
+            break
+    return ScenarioCertificate(
+        selected, candidates, len(scenarios), conflicts,
+        len(constraints), infeasible,
+    )
 
 
 def first_path_divergence(

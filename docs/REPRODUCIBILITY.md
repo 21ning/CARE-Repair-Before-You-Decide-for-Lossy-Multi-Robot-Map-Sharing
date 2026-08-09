@@ -9,12 +9,34 @@ PYTHONDONTWRITEBYTECODE=1 python -m pytest -q
 
 Each policy-condition uses 100 independent maps. Policies share the same map
 and deterministic loss trace within each map. All confidence intervals are
-deterministic 20,000-draw bootstraps over maps; standard deviations use all
-100 trial-level observations. Runners reject nonempty output directories.
+deterministic 20,000-draw map-cluster bootstraps; paired intervals preserve the
+matched map and loss trace. Standard deviations use all 100 trial-level
+observations. Runners reject nonempty output directories.
 
-## CARE deadline and cross-planner gate
+## Final CARE loss and baseline matrix
 
-This is the current main-method matrix: 100 independent maps crossed with two
+This is the frozen main experiment: 100 maps, six packet-loss rates, eight
+policies and two planners (9,600 complete episodes).
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python scripts/run_psr_suite.py \
+  --config configs/care_dual_certificate_loss_baselines_100map.yaml \
+  --output-directory /tmp/care-loss-baselines --workers 32
+PYTHONDONTWRITEBYTECODE=1 python scripts/analyze_care_loss_baselines.py \
+  --input-directory /tmp/care-loss-baselines \
+  --output-directory /tmp/care-loss-baselines-analysis
+PYTHONDONTWRITEBYTECODE=1 python scripts/make_care_loss_baseline_artifacts.py \
+  --analysis-directory /tmp/care-loss-baselines-analysis \
+  --table-directory /tmp/care-tables --figure-directory /tmp/care-figures
+```
+
+The analyzer requires exactly 9,600 unique rows and the complete set of 100
+matched `(layout_seed, network_seed)` keys in every condition before emitting
+statistics.
+
+## Earlier CARE-Lite deadline and cross-planner gate
+
+This is the rule-based ablation matrix: 100 independent maps crossed with two
 planners, four delays, and four policies (3,200 complete episodes).
 
 ```bash

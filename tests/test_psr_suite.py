@@ -23,6 +23,27 @@ def test_psr_suite_persists_matched_rows_and_traces(tmp_path) -> None:
     assert {row["policy"] for row in rows} == {"one_shot_delta", "utility_triggered_repair"}
     assert all(row["instance_fingerprint"] == rows[0]["instance_fingerprint"] for row in rows)
     assert (tmp_path / "traces.csv").is_file()
+    assert len(tuple((tmp_path / "instances").glob("*.json"))) == 1
+    assert len(tuple((tmp_path / "instances").glob("*.npz"))) == 1
+
+
+def test_psr_suite_preserves_every_decimal_density_instance(tmp_path) -> None:
+    config = {
+        "instance_family": "fork_bottleneck_upper_block",
+        "seeds": [2, 3], "map_size": 16, "obstacle_densities": [.2], "num_agents": 2,
+        "observation_radius": 3, "max_episode_steps": 25,
+        "data_bytes_per_agent_per_step": 676, "control_bytes_per_agent_per_step": 256,
+        "repair_interval_steps": 1, "sync_interval_steps": 4,
+        "corridor_horizon": 4, "corridor_radius": 1,
+        "digest_base_bytes": 16, "digest_entry_bytes": 6,
+        "ack_bytes": 8, "patch_base_bytes": 4,
+        "loss_probabilities": [0.0], "delay_steps": [0],
+        "policies": ["one_shot_delta"], "link_seed": 7,
+    }
+    run_suite(config, tmp_path)
+    names = sorted(path.name for path in (tmp_path / "instances").glob("*.json"))
+    assert len(names) == 2
+    assert all(name.startswith("density-0p20_layout-") for name in names)
 
 
 def test_psr_suite_can_persist_preregistered_fork_instances(tmp_path) -> None:
@@ -58,7 +79,10 @@ def test_parallel_policy_execution_reproduces_serial_rows(tmp_path) -> None:
     serial, parallel = tmp_path / "serial", tmp_path / "parallel"
     run_suite({**base, "workers": 1}, serial)
     run_suite({**base, "workers": 2}, parallel)
-    timing = {"planning_cpu_ms", "utility_trigger_cpu_ms", "episode_cpu_ms"}
+    timing = {
+        "planning_cpu_ms", "utility_trigger_cpu_ms", "certificate_cpu_ms",
+        "episode_cpu_ms",
+    }
     serial_rows = [{key: value for key, value in row.items() if key not in timing} for row in csv.DictReader((serial / "results.csv").open())]
     parallel_rows = [{key: value for key, value in row.items() if key not in timing} for row in csv.DictReader((parallel / "results.csv").open())]
     assert serial_rows == parallel_rows

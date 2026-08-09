@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create the CARE cross-planner paper table and delay figure."""
+"""Create the CARE-Lite cross-planner paper table and delay figure."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 LABELS = {
     "one_shot_delta": "One-shot",
     "utility_triggered_repair": "PSR-UT",
-    "deadline_aware_repair": "CARE",
+    "deadline_aware_repair": "CARE-Lite",
 }
 COLORS = {
     "one_shot_delta": "#777777",
@@ -56,7 +56,7 @@ def main() -> None:
         writer.writeheader(); writer.writerows(output)
 
     lines = [
-        "# CARE cross-planner primary result", "",
+        "# CARE-Lite cross-planner primary result", "",
         "100 independent maps; 30% loss; zero link delay. CIs bootstrap independent maps.", "",
         "| Planner | Method | CSR mean ± SD [95% CI] | Attempted KB mean ± SD | Planning CPU ms |",
         "|---|---|---:|---:|---:|",

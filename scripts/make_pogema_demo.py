@@ -61,7 +61,7 @@ def run_episode():
         ))
 
     result = PSRClosedLoopRunner(
-        policy=ReplicaPolicy.DEADLINE_AWARE_REPAIR,
+        policy=ReplicaPolicy.CERTIFICATE_REPAIR,
         config=config,
         step_observer=record_replica,
     ).run(instance)

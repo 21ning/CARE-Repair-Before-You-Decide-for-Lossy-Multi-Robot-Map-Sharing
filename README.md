@@ -3,9 +3,13 @@
 CARE is a compact research implementation for reliable occupancy-map sharing
 between multiple robots over lossy links. Its main protocol,
 **Commitment-Aware Replica rEpair (CARE)**, keeps an explicit versioned map replica at
-each robot and minimizes encoded repair traffic subject to a locally derived
-route-commitment deadline. The earlier fixed-corridor PSR-UT remains as a
-matched ablation.
+each robot, computes an exact minimum-byte scenario certificate, and combines
+it with a locally derived route-commitment certificate under positive delay.
+The earlier fixed-corridor PSR-UT and rule-based CARE-Lite remain matched
+ablations.
+
+The final method is the `certificate_repair` policy in code and is labeled
+`CARE-DC` in generated tables when it must be distinguished from CARE-Lite.
 
 ![CARE running in POGEMA](assets/pogema_demo.gif)
 
@@ -44,21 +48,27 @@ At every environment step:
    updates;
 2. updates are sent through a deterministic directed loss/delay channel;
 3. each receiver plans on its own local map replica;
-4. CARE compares optimistic and pessimistic receiver-local paths to detect a
-   decision ambiguity;
-5. the first unknown cell on the operational path gives the latest safe repair
-   time, which is checked against the query--patch round trip;
-6. CARE queries only unknown cells in the one-hop action-graph influence set
-   between path divergence and reconvergence;
+4. CARE enumerates a bounded family of sparse occupancy scenarios near the
+   receiver's imminent path and replans each scenario on the shared action
+   graph;
+5. it solves an exact minimum hitting-set problem whose query cells distinguish
+   every action-conflicting scenario that can still be repaired in time;
+6. under positive delay, the result is combined with an optimistic/pessimistic
+   route-commitment certificate and checked against the query--patch round trip;
 7. the peer returns only newer stamped cells, after which POGEMA executes the
    selected actions.
 
+For the frozen setting, at most eight candidate cells and two simultaneous
+blocked candidates produce at most 37 scenarios and 256 possible query
+subsets. The exact scenario-separation theorem, complexity and guarantee
+boundary are given in [docs/CARE_ALGORITHM.md](docs/CARE_ALGORITHM.md).
+
 With 100 independent maps, 30% loss, and zero delay, CARE reaches 0.9375 CSR
-with A* and 0.9400 with D* Lite, versus 0.8400/0.8462 for One-shot. It uses
-about 68.6 KB per episode, roughly 7 KB less than fixed-corridor PSR-UT at
+with A* and 0.9413 with D* Lite, versus 0.8400/0.8462 for One-shot. It uses
+about 67.7 KB per episode, roughly 8 KB less than fixed-corridor PSR-UT at
 statistically equivalent reliability. See
-[docs/CARE_GATE_RESULT.md](docs/CARE_GATE_RESULT.md) for the paired confidence
-intervals and deadline diagnostics.
+[docs/CARE_FINAL_RESULTS.md](docs/CARE_FINAL_RESULTS.md) for all baselines,
+loss rates, paired confidence intervals and the honest high-loss boundary.
 
 The implementation separates mapping, communication, planning, and environment
 execution so that the protocol can be inspected or replaced independently.
@@ -136,7 +146,7 @@ be empty so results from separate runs cannot be mixed accidentally.
 
 ```bash
 python scripts/run_psr_suite.py \
-  --config configs/care_deadline_cross_planner_100map.yaml \
+  --config configs/care_dual_certificate_loss_baselines_100map.yaml \
   --output-directory /tmp/care-demo \
   --workers 32
 ```
@@ -151,12 +161,16 @@ The runner writes:
   summary.json      Configuration and run metadata
 ```
 
-To analyze the CARE cross-planner matrix:
+To analyze the complete CARE loss/baseline matrix and generate its artifacts:
 
 ```bash
-python scripts/analyze_care_deadline_cross_planner.py \
+python scripts/analyze_care_loss_baselines.py \
   --input-directory /tmp/care-demo \
   --output-directory /tmp/care-analysis
+python scripts/make_care_loss_baseline_artifacts.py \
+  --analysis-directory /tmp/care-analysis \
+  --table-directory /tmp/care-tables \
+  --figure-directory /tmp/care-figures
 ```
 
 Additional commands for topology, scale, delay, and ablation configurations
@@ -164,7 +178,7 @@ are documented in [docs/REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md).
 
 ## Generate the POGEMA demo
 
-The README animation runs one deterministic deadline-aware CARE episode and replays its
+The README animation runs one deterministic dual-certificate CARE episode and replays its
 recorded actions in POGEMA using the visualization semantics described above.
 
 ```bash

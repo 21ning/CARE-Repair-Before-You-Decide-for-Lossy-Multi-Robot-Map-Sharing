@@ -42,7 +42,11 @@ RESULT_FIELDS = [
     "deadline_trigger_checks", "deadline_ambiguous_receivers",
     "deadline_feasible_receivers", "deadline_infeasible_receivers",
     "deadline_query_cells", "mean_decision_slack",
-    "utility_trigger_cpu_ms", "episode_cpu_ms",
+    "certificate_checks", "certificate_scenario_planning_calls",
+    "certificate_conflicting_pairs", "certificate_feasible_pairs",
+    "certificate_infeasible_pairs", "certificate_candidate_cells",
+    "certificate_query_cells", "utility_trigger_cpu_ms", "certificate_cpu_ms",
+    "episode_cpu_ms",
 ]
 TRACE_FIELDS = [
     "seed", "density", "loss_probability", "delay_steps", "planner", "policy", "step",
@@ -84,6 +88,8 @@ def runner_config(config: dict, *, seed: int, density: float, loss: float, delay
         replica_digest_bytes=int(config.get("replica_digest_bytes", 16)),
         path_weighted_sigma=float(config.get("path_weighted_sigma", 1.0)),
         max_digest_peers=config.get("max_digest_peers"),
+        certificate_max_cells=int(config.get("certificate_max_cells", 8)),
+        certificate_uncertainty_order=int(config.get("certificate_uncertainty_order", 2)),
         link=link,
     )
 
@@ -123,8 +129,16 @@ def _run_policy_task(task: tuple[dict, float, int, int, int, float, int, str, st
         "deadline_infeasible_receivers": result.deadline_infeasible_receivers,
         "deadline_query_cells": result.deadline_query_cells,
         "mean_decision_slack": result.mean_decision_slack,
+        "certificate_checks": result.certificate_checks,
+        "certificate_scenario_planning_calls": result.certificate_scenario_planning_calls,
+        "certificate_conflicting_pairs": result.certificate_conflicting_pairs,
+        "certificate_feasible_pairs": result.certificate_feasible_pairs,
+        "certificate_infeasible_pairs": result.certificate_infeasible_pairs,
+        "certificate_candidate_cells": result.certificate_candidate_cells,
+        "certificate_query_cells": result.certificate_query_cells,
         "planning_cpu_ms": result.planning_cpu_ms,
         "utility_trigger_cpu_ms": result.utility_trigger_cpu_ms,
+        "certificate_cpu_ms": result.certificate_cpu_ms,
         "episode_cpu_ms": result.episode_cpu_ms,
         **result.network_summary,
     }
@@ -159,9 +173,13 @@ def run_suite(config: dict, output: Path) -> dict:
             for network_index, network_seed in enumerate(network_seeds)
         ]
     for density in config["obstacle_densities"]:
+        density_tag = f"{float(density):.2f}".replace(".", "p")
         for layout_seed in dict.fromkeys(layout_seed for _, layout_seed, _ in trial_plan):
             instance = _instance_for_condition(config, seed=layout_seed, density=float(density))
-            save_instance(instance, instances / f"density-{float(density):.2f}_layout-{layout_seed}_{instance.fingerprint()[:12]}")
+            save_instance(
+                instance,
+                instances / f"density-{density_tag}_layout-{layout_seed}_{instance.fingerprint()[:12]}.json",
+            )
         for trial_seed, layout_seed, network_seed in trial_plan:
             for loss in config["loss_probabilities"]:
                 for delay in config["delay_steps"]:

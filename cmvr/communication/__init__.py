@@ -4,8 +4,10 @@ from .budget import CommunicationBudget
 from .unreliable import LinkConfig, MessageKind, MessageStatus, NetworkEvent, NetworkMessage, UnreliableNetwork
 from .replica_protocol import (
     DecisionRepairPlan, DeltaPayload, DigestQuery, PatchPayload, PSRConfig,
-    ReplicaDigest, ReplicaPolicy, belief_stamp, deadline_decision_repair_plan,
-    first_path_divergence, full_replica_chunk, ordered_digest_peers,
+    ReplicaDigest, ReplicaPolicy, ScenarioCertificate, belief_stamp,
+    deadline_decision_repair_plan, decision_candidate_cells,
+    first_path_divergence, full_replica_chunk, minimum_scenario_certificate,
+    ordered_digest_peers, scenario_blocked_sets,
     planning_corridor, path_distance, path_weight, replica_digest,
     update_from_belief, update_stamp,
 )
@@ -20,8 +22,8 @@ from .wire import (
 __all__ = [
     "CommunicationBudget",
     "LinkConfig", "MessageKind", "MessageStatus", "NetworkEvent", "NetworkMessage", "UnreliableNetwork",
-    "DecisionRepairPlan", "DeltaPayload", "DigestQuery", "PatchPayload", "PSRConfig", "ReplicaDigest", "ReplicaPolicy",
-    "belief_stamp", "deadline_decision_repair_plan", "first_path_divergence", "full_replica_chunk", "ordered_digest_peers", "planning_corridor",
+    "DecisionRepairPlan", "DeltaPayload", "DigestQuery", "PatchPayload", "PSRConfig", "ReplicaDigest", "ReplicaPolicy", "ScenarioCertificate",
+    "belief_stamp", "deadline_decision_repair_plan", "decision_candidate_cells", "first_path_divergence", "full_replica_chunk", "minimum_scenario_certificate", "ordered_digest_peers", "scenario_blocked_sets", "planning_corridor",
     "path_distance", "path_weight", "replica_digest", "update_from_belief", "update_stamp",
     "ACK_BYTES", "DELTA_BYTES", "DIGEST_ENTRY_BYTES", "DIGEST_HEADER_BYTES",
     "PATCH_HEADER_BYTES", "REPLICA_DIGEST_BYTES", "WireFormatError", "ack_token",

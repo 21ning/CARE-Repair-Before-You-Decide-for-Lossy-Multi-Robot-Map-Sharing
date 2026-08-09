@@ -15,17 +15,16 @@
 Sparse remote map updates can be lost precisely when a robot must commit to an
 uncertain route. We formulate replica repair as encoded-byte minimization under
 a planning deadline and introduce CARE, a versioned anti-entropy protocol that
-derives both quantities from a receiver's local planning problem. Optimistic
-and pessimistic paths identify an ambiguous branch; the first unknown cell on
-the operational path gives the latest safe repair time, and the one-hop
-action-graph influence set gives the cells to query. On 100 independently
-generated matched maps with 30\% loss, CARE improves A* completion success
-from 0.8400 to 0.9375 for 3.28~KB additional attempted traffic over one-shot
-sharing. It matches the reliability of the earlier fixed-corridor PSR-UT while
-using 7.15~KB less traffic. Repeating the full matrix with incremental D* Lite
-gives 0.9400 success and the same traffic operating point. Delay experiments
-show that CARE suppresses repairs whose query--patch round trip cannot meet the
-derived deadline.
+computes a minimum decision certificate. CARE enumerates a bounded sparse
+occupancy-scenario family and solves an exact hitting-set problem: queried cells
+must separate every scenario pair inducing different repairable actions. A
+second route-commitment certificate accounts for query--patch latency. Across
+9,600 complete episodes (100 matched independent maps, six loss rates, eight
+policies, A* and D* Lite), CARE forms a reliability--traffic Pareto point. At
+30\% loss it improves A* completion success from 0.8400 to 0.9375 for only
+2.44~KB additional attempted traffic over one-shot sharing. It matches the
+rule-based CARE-Lite ablation while saving 0.83~KB and uses 196~KB less than
+reliable ARQ. D* Lite gives 0.9413 success at the same traffic point.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -37,103 +36,106 @@ multi-agent path finding
 Robots with local sensing often exchange map state. A dropped cell update can
 leave one receiver with a stale replica; if the cell lies on an imminent route,
 the receiver may commit before local sensing resolves the uncertainty. This is
-not a general claim that every replica mismatch matters. Rather, it is a
-specific failure mode of one-shot explicit map sharing under a decision
-deadline.
+not a general claim that every replica mismatch matters. It is a specific
+failure mode of one-shot explicit map sharing under a decision deadline.
 
-We study an explicit-state systems question instead of replacing the planner or
-learning a latent communication policy. Existing learned communication systems
+We study an explicit-state communication problem rather than replace the
+planner or learn a latent communication policy. Learned communication systems
 optimize different representations and coordination objectives
 \cite{ma2021dcc,wang2023scrimp}. Here all methods share the cell representation,
-binary codec, instance, budgets, and lossy trace; only missing-state recovery
+binary codec, instance, budgets and lossy trace; only missing-state recovery
 changes. A* and D* Lite are evaluated independently to separate the protocol
-claim from one planner's tie breaking.
+claim from one planner's cache or tie breaking.
 
-Our contributions are: (i) an encoded-byte objective subject to a local,
-truth-map-free decision certificate; (ii) a deadline derived from route
-commitment and measured query--patch latency; (iii) a graph-derived adaptive
-repair scope rather than a fixed corridor rule; and (iv) matched 100-map
-evidence across static and incremental planners, including traffic,
-reliability, delay, and computation overhead.
+Our contributions are: (i) an encoded-byte optimization with an exact
+scenario-separation certificate and a necessary-and-sufficient hitting-set
+condition; (ii) a dual certificate combining action identifiability with a
+deadline derived from route commitment and measured query--patch latency;
+(iii) a bounded exact online solver and complexity statement; and (iv) matched
+100-map evidence across six loss rates, eight recovery policies and
+static/incremental planners, including traffic, reliability, delay and compute.
 
-\section{Replica Repair Protocol}
-Each robot maintains a versioned cell map $M_i^t$. A cell carries a
-lexicographically ordered stamp containing version, observation time, sender,
-and state tie break. An incoming cell is merged only if its stamp dominates the
-local stamp. Normal observations are directed one-shot deltas. Data, digest,
-acknowledgement, and repair bytes all traverse the same directed lossy channel.
+\section{Decision-Critical Replica Repair}
+Each robot maintains a versioned cell map $M_i^t$. A cell stamp orders version,
+observation time, sender and state tie break; an incoming cell is merged only
+if its stamp dominates the local stamp. Normal observations are directed
+one-shot deltas. Data, digest, acknowledgement and repair packets traverse the
+same directed lossy channel.
 
-We use an executable fixed-width wire format rather than object-level traffic
-estimates. A cell delta is 13 bytes, including provenance, coordinates, state,
-version, observation time, and CRC16. A query over $n$ stamped cells is
-$16+6n$ bytes, a patch returning $m$ cells is $4+13m$ bytes, an ACK is 8 bytes,
-and a replica digest is 16 bytes. The six-byte query entry bit-packs bounded
-coordinates and the complete requester stamp. Update identifiers are
-deterministically reconstructed and are not transmitted. The channel carries
-the resulting byte strings; decoders reject invalid lengths, versions, bounds,
-reserved bits, or checksums before applying the same dominating-stamp merge.
-All attempted encoded bytes, including lost packets, count as traffic.
+We use an executable fixed-width wire format. A cell delta is 13 bytes, a query
+over $n$ stamped cells is $16+6n$ bytes, a patch returning $m$ cells is
+$4+13m$ bytes, an ACK is 8 bytes and a replica digest is 16 bytes. Decoders
+validate lengths, versions, bounds, reserved bits and checksums. All attempted
+encoded bytes, including lost packets, count as traffic.
 
-For receiver $j$, let $\pi_j^+$ be its operational optimistic path and
-$\pi_j^-$ the path obtained when UNKNOWN cells are blocked. Different action
-sequences indicate a robust-decision ambiguity without accessing map truth.
-Let $k_j$ be the index of the first UNKNOWN cell on $\pi_j^+$. The last safe
-repair time before entering uncertain state is
+Let $U_j$ contain at most $n=8$ UNKNOWN vertices on, or one action-graph hop
+from, receiver $j$'s next $H=8$ optimistic path vertices. A scenario
+$\omega\subseteq U_j$ marks blocked candidates. We enumerate
+$\Omega_q=\{\omega:|\omega|\leq q\}$ with $q=2$, hence at most
+$S=\sum_{r=0}^q{n\choose r}=37$ scenarios. The all-free scenario uses the
+operational path; a canonical shortest-path oracle evaluates blocked
+counterfactuals on the planner-shared graph, yielding $\pi_\omega$.
+For a pair with different sequences, let $\delta(\omega,\omega')$ be its first
+action divergence and $D_{\omega\omega'}=\omega\triangle\omega'$. The
+query--patch round trip is $L_{\rm rtt}=2d$. Retaining pairs with
+$\delta(\omega,\omega')\geq L_{\rm rtt}$ gives feasible conflict set
+$\mathcal E_j$. With query cost $B(Q)=16+6|Q|$, CARE solves
 \begin{equation}
-\tau_j=\max(0,k_j-1), \qquad L_{\rm rtt}=2d,
+\min_{Q\subseteq U_j} B(Q)\quad\mathrm{s.t.}\quad
+Q\cap D_e\neq\varnothing,\quad \forall e\in\mathcal E_j .
+\label{eq:hitting}
 \end{equation}
-where $d$ is the measured one-way link delay in environment steps. CARE sends
-only if $L_{\rm rtt}\leq\tau_j$.
 
-To derive scope, CARE follows both paths from first divergence to first
-reconvergence. For the next route commitment, direct branch feasibility is
-determined by branch vertices and their one-step successors. CARE therefore
-forms $\mathcal{S}_j$ from UNKNOWN vertices on or incident to those branches in
-the four-neighbor action graph. Incidence is fixed by the planner's motion model,
-not a tuned dilation radius. With the executable
-codec, query cost is $B(Q)=16+6|Q|$. CARE solves
-\begin{equation}
-\min_{Q\subseteq\mathcal{S}_j} B(Q)
-\quad\text{s.t.}\quad
-\mathcal{S}_j\subseteq Q,\; L_{\rm rtt}\leq\tau_j,
-\end{equation}
-whose feasible minimum is $Q^*=\mathcal{S}_j$; otherwise $Q^*=\varnothing$.
-If the codec cap binds, witnesses are retained in path order, protecting the
-earliest decisions first. A peer returns only cells with dominating stamps.
-This is a computable certificate under local interval uncertainty, not an
-oracle assumption that a peer knows every requested cell.
+\textit{Proposition.} $Q$ identifies every feasible action class in
+$\Omega_q$ iff it satisfies (\ref{eq:hitting}). Query observations under two
+scenarios are identical iff $Q\cap(\omega\triangle\omega')=\varnothing$;
+therefore hitting every action-conflicting pair is respectively necessary and
+sufficient. Since each entry costs six bytes, minimum cardinality is minimum
+encoded size. Cardinality-ordered enumeration is exact with bounded cost
+$O(SP+S^2H+2^n|\mathcal E_j|n)$, where $P$ is one bounded path search.
+
+Latency adds a route-entry deadline. Let $\pi_j^+$ traverse UNKNOWN and
+$\pi_j^-$ block it, and let $k_j$ be the first UNKNOWN index on $\pi_j^+$.
+The safe slack is $\tau_j=\max(0,k_j-1)$. When
+$L_{\rm rtt}\leq\tau_j$, a one-hop influence certificate is formed between
+the paths' divergence and reconvergence; otherwise it is suppressed. At zero
+delay, CARE uses the exact scenario certificate. With positive delay it sends
+the duplicate-free union of scenario and route-commitment certificates. A peer
+returns only cells with dominating stamps. The guarantee is exact only within
+the declared bounded $q$-sparse family; it neither accesses map truth nor
+assumes a peer knows each queried cell.
 
 \section{Experimental Protocol}
-The primary task is an eight-robot shared-map decision geometry: remote
-observers can see a blocked branch before paired seekers reach a fork, while
-seekers cannot locally observe the branch before committing. Every comparison
-uses 100 independent maps, each paired across policies with one independent
-loss trace and identical per-step budgets. The complete policy matrix is run
-once with deterministic A* and once with incremental D* Lite. We report
-trial-level means, sample standard deviations, and bootstrap 95\% intervals
-over maps.
+The task is an eight-robot shared-map decision geometry: remote observers can
+see a blocked branch before paired seekers reach a fork, while seekers cannot
+locally observe it before committing. Every condition uses 100 independently
+generated maps, paired across policies with the same independent loss trace and
+per-step budgets. The complete loss/baseline matrix contains 9,600 episodes:
+six i.i.d. packet-loss probabilities from 0 to 0.5, eight policies and two
+planners. We report means, sample standard deviations and deterministic
+20,000-draw map-cluster bootstrap 95\% intervals. Paired comparisons subtract
+outcomes within the same map and trace before resampling.
 
-Primary controls are One-shot Unique Delta, Retry-All ARQ, Path-Weighted ARQ,
-Periodic Full Anti-Entropy (K=4), Mismatch-Triggered Full Replica Repair, and
-PSR-UT, and CARE. The ablations change one
-factor: utility trigger versus an action-triggered repair control, cadence 1
-versus 4, and corridor repair versus full-replica repair. Extensions sweep
-loss, obstacle density, link delay, agent/map scale, and three independent
-decision geometries. Random-map conditions are retained as negative controls.
+Controls are One-shot Unique Delta, Retry-All ARQ, Path-Weighted ARQ, Periodic
+Full Anti-Entropy ($K=4$), Mismatch-Triggered Full Repair, fixed-corridor
+PSR-UT, rule-based CARE-Lite and final dual-certificate CARE. Existing
+single-factor ablations vary trigger, cadence and repair scope. Extensions vary
+obstacle density, link delay, agent/map scale and decision topology, with
+random maps as negative controls.
 
 \section{Results}
 At 30\% loss with A*, CARE improves One-shot completion success by $+0.0975$
-(paired 95\% CI $[+0.0800,+0.1163]$) for 3.28~KB additional attempted bytes.
-Relative to fixed-corridor PSR-UT, CARE changes success by $+0.0050$
-($[-0.0125,+0.0225]$) while saving 7.15~KB
-($[-7.39,-6.91]$). D* Lite independently yields $+0.0938$ over One-shot and
-$+0.0088$ over PSR-UT, while saving 7.03~KB versus PSR-UT. Thus the protocol
-gain is stable to planner substitution. CARE does not claim universal
-dominance: under A*, Retry-All reaches 0.9762 CSR at 263.9~KB and Periodic Full
-reaches 0.9575 at 285.8~KB; CARE is the 0.9375/68.6~KB operating point.
+(paired 95\% CI $[+0.0788,+0.1163]$) for 2.44~KB additional attempted bytes.
+Relative to PSR-UT, success changes by $+0.0050$
+($[-0.0125,+0.0225]$) while saving 7.98~KB ($[-8.20,-7.76]$).
+Relative to CARE-Lite, success is unchanged ($[-0.0138,+0.0138]$) and CARE
+saves 0.83~KB ($[-1.00,-0.66]$). D* Lite independently gives $+0.0950$ over
+One-shot and 0.9413 CSR at 67.67~KB. CARE does not claim universal dominance:
+Path-Weighted ARQ reaches 0.9775 CSR at 263.9~KB, while Periodic Full reaches
+0.9575 at 285.8~KB. CARE is the compact 0.9375/67.8~KB operating point.
 
 \begin{table}[t]
-\caption{Cross-planner primary comparison at 30\% loss and zero delay: 100 independent maps.}
+\caption{Primary comparison at 30\% loss: 100 independent maps.}
 \label{tab:primary}
 \centering
 \small
@@ -142,61 +144,55 @@ reaches 0.9575 at 285.8~KB; CARE is the 0.9375/68.6~KB operating point.
 Planner & Method & CSR & Attempted KB \\
 \midrule
 A* & One-shot & .8400 & 65.35 \\
+A* & Periodic Full & .9575 & 285.78 \\
+A* & Path-Weighted ARQ & .9775 & 263.92 \\
 A* & PSR-UT & .9325 & 75.77 \\
-A* & CARE & \textbf{.9375} & \textbf{68.63} \\
+A* & CARE-Lite & .9375 & 68.63 \\
+A* & CARE & \textbf{.9375} & \textbf{67.79} \\
 D* Lite & One-shot & .8462 & 65.30 \\
-D* Lite & PSR-UT & .9313 & 75.64 \\
-D* Lite & CARE & \textbf{.9400} & \textbf{68.62} \\
+D* Lite & CARE & \textbf{.9413} & \textbf{67.67} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\columnwidth]{care_cross_planner_delay.png}
-  \caption{Matched delay sweep. CARE preserves the same operating point under
-  A* and D* Lite, and suppresses repair once its round trip misses the derived
-  route-commitment deadline.}
-  \label{fig:care-delay}
+  \includegraphics[width=\columnwidth]{care_loss_baseline_sweep.png}
+  \caption{Reliability and attempted traffic (log scale) across loss rates.
+  CARE remains a low-traffic Pareto point; reliable ARQ is a higher-traffic endpoint.}
+  \label{fig:care-loss}
 \end{figure}
 
-The original ablations motivate the upgrade. Replacing PSR-UT with action-triggered
-repair reduces CSR from 0.9325 to 0.8400 ($+0.0925$ for PSR-UT,
-$[+0.0750,+0.1100]$). Changing only the repair cadence from every step to
-every four steps reduces CSR to 0.8488, exposing the decision deadline.
-Changing only the repair scope to a full replica reduces CSR to 0.8400 and
-increases traffic from 75.8 to 174.0~KB; paired changes are $+0.0925$ CSR and
-$-98.2$~KB in favor of PSR-UT.
+CARE's A* CSR across loss 0.1--0.5 is 0.9888, 0.9788, 0.9375,
+0.9013 and 0.8263. Its paired gain over One-shot remains positive at every
+nonzero loss rate, from $+0.0262$ to $+0.0975$, and the D* Lite trend agrees.
+At loss 0.5, CARE trades 0.0200 A* CSR against CARE-Lite for 1.23~KB less
+traffic; thus the certificate is a tradeoff, not uniformly superior.
 
-The deadline experiment supplies the new causal check. CARE's mean derived
-slack is about 4.1 steps. With one-step delay it obtains 0.9000 A* CSR; at
-two-step delay, about half the candidate repairs remain feasible and CARE
-matches PSR-UT at 0.8550 while saving 11.78~KB. At four-step delay no query can
-complete before commitment: CARE sends no repair, matches One-shot and PSR-UT
-at 0.7388, and saves 17.35~KB versus PSR-UT. Planning computation is
-42.14~ms per A* episode (37.78~ms for One-shot) and 156.02~ms per D* Lite
-episode (142.77~ms for One-shot); D* Lite is used as an independence check,
-not claimed as the faster implementation on these small maps.
+The prior ablations explain the gain. Replacing PSR-UT with action-triggered
+repair reduces CSR from 0.9325 to 0.8400; changing repair cadence from every
+step to every four steps gives 0.8488; full-replica repair gives 0.8400 and
+174.0~KB. The deadline sweep supplies a causal check: with two delivery steps,
+about half the repairs remain feasible and CARE-Lite reaches 0.8550 while
+saving 11.78~KB versus PSR-UT; at four steps no query can meet the derived
+deadline, so repair is suppressed.
 
-The prior extensions delimit the task regime. PSR-UT achieves CSR 0.9913, 0.9750,
-0.9325, 0.9175, and 0.8388 at loss probabilities 0.1 through 0.5. At one,
-two, and four delivery steps, CSR decreases to 0.9075, 0.8550, and 0.7388,
-respectively. Across 4/8/16/32 agents, its paired improvement over One-shot
-is positive but small: $+0.0050$ to $+0.0003$. It improves over One-shot in
-T-junction, asymmetric-fork, and narrow-bypass validations by $+0.1163$,
-$+0.1175$, and $+0.1275$ CSR. In random-map negative controls, PSR-UT and
-One-shot are approximately equivalent. These controls show that replica repair
-matters when a missing update changes an imminent route, not for arbitrary map
-disagreement.
+In the 32-worker loss matrix, exact certification takes 0.77~s per 25-step A*
+episode and 0.87~s with D* Lite, respectively 2.52$\times$ and 2.09$\times$
+CARE-Lite episode CPU. Across 4/8/16/32-agent scale controls, PSR-UT's paired
+gain over One-shot is positive but small. In three independent fork topologies
+it is $+0.1163$ to $+0.1275$, while random maps are a negative control. Replica
+repair matters when a missing update changes an imminent route, not for
+arbitrary disagreement.
 
 \section{Conclusion}
 CARE turns decision-critical replica repair into a codec-priced constrained
-communication algorithm. Receiver-local path bounds identify ambiguity, route
-commitment derives the deadline, and the planner action graph derives a compact
-repair certificate. Matched A* and D* Lite results support a planner-independent
-reliability--traffic operating point; delay experiments expose exactly when
-repair becomes too late. Reliable ARQ remains the higher-traffic reliability
-endpoint rather than a target CARE claims to dominate.
+communication algorithm. Exact scenario separation derives a minimum action
+certificate, route commitment derives a latency certificate, and their union
+protects decisions before execution. Matched A* and D* Lite results across six
+loss rates support a planner-independent reliability--traffic operating point.
+Reliable ARQ remains the higher-traffic reliability endpoint rather than a
+target CARE claims to dominate.
 
 \bibliographystyle{IEEEtran}
 \bibliography{psr_icassp_refs}

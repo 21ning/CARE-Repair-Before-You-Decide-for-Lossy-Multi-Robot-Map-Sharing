@@ -221,6 +221,7 @@ def test_new_triggered_repairs_keep_ordinary_deltas_one_shot() -> None:
         ReplicaPolicy.ACTION_TRIGGERED_REPAIR,
         ReplicaPolicy.UTILITY_TRIGGERED_REPAIR,
         ReplicaPolicy.DEADLINE_AWARE_REPAIR,
+        ReplicaPolicy.CERTIFICATE_REPAIR,
     ):
         runner = PSRClosedLoopRunner(policy=policy, config=_config(loss=0.0))
         task = _DeliveryTask(update, receiver_id=1)
@@ -257,3 +258,19 @@ def test_runner_supports_incremental_dstar_lite_without_policy_changes() -> None
     ).run(_instance())
     assert first == second
     assert first.planner == "dstar_lite"
+
+
+def test_certificate_repair_solves_bounded_scenario_problem() -> None:
+    result = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.CERTIFICATE_REPAIR,
+        config=replace(
+            _config(loss=0.0), repair_interval_steps=1,
+            certificate_max_cells=5, certificate_uncertainty_order=2,
+        ),
+    ).run(_instance())
+    assert result.certificate_checks > 0
+    assert result.certificate_scenario_planning_calls > 0
+    assert result.certificate_conflicting_pairs > 0
+    assert result.certificate_feasible_pairs > 0
+    assert result.certificate_candidate_cells >= result.certificate_query_cells
+    assert result.certificate_cpu_ms > 0

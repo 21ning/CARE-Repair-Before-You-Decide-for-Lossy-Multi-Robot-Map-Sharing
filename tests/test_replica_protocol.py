@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from cmvr.communication import (
     deadline_decision_repair_plan, first_path_divergence, full_replica_chunk,
-    ordered_digest_peers, planning_corridor, replica_digest,
+    minimum_scenario_certificate, ordered_digest_peers, planning_corridor,
+    replica_digest, scenario_blocked_sets,
 )
 from cmvr.mapping import BeliefMap, MapUpdate
 
@@ -40,6 +41,63 @@ def test_deadline_plan_suppresses_repairs_that_cannot_arrive_in_time() -> None:
     assert plan.ambiguous and not plan.feasible
     assert plan.decision_slack_steps == 0
     assert plan.cells == ()
+
+
+def test_scenario_certificate_is_the_exact_minimum_hitting_set() -> None:
+    a, b, c = (1, 1), (1, 2), (1, 3)
+    common = ((3, 1), (3, 2), (3, 3))
+    right = common + ((3, 4),)
+    up = common + ((2, 3),)
+    paths = {
+        frozenset(): right,
+        frozenset((a, b)): up,
+        frozenset((b, c)): up,
+    }
+    certificate = minimum_scenario_certificate(
+        (a, b, c), paths, round_trip_steps=2,
+    )
+    assert certificate.cells == (b,)
+    assert certificate.conflicting_pairs == 2
+    assert certificate.feasible_pairs == 2
+    assert certificate.infeasible_pairs == 0
+
+
+def test_scenario_certificate_records_pairs_that_miss_the_deadline() -> None:
+    cell = (1, 1)
+    certificate = minimum_scenario_certificate(
+        (cell,), {
+            frozenset(): ((2, 1), (2, 2)),
+            frozenset((cell,)): ((2, 1), (1, 1)),
+        },
+        round_trip_steps=1,
+    )
+    assert certificate.cells == ()
+    assert certificate.conflicting_pairs == 1
+    assert certificate.feasible_pairs == 0
+    assert certificate.infeasible_pairs == 1
+
+
+def test_q_sparse_scenario_family_has_declared_bounded_size() -> None:
+    candidates = tuple((1, index) for index in range(8))
+    scenarios = scenario_blocked_sets(candidates, uncertainty_order=2)
+    assert len(scenarios) == 1 + 8 + 28
+    assert scenarios[0] == frozenset()
+    assert all(len(scenario) <= 2 for scenario in scenarios)
+
+
+def test_scenario_certificate_tie_break_is_deterministic() -> None:
+    a, b = (1, 1), (1, 2)
+    right = ((2, 1), (2, 2), (2, 3))
+    left = ((2, 1), (1, 1), (1, 2))
+    certificate = minimum_scenario_certificate(
+        (a, b), {
+            frozenset(): right,
+            frozenset((a, b)): left,
+        },
+        round_trip_steps=0,
+    )
+    # Either cell separates the two scenarios; candidate order selects a.
+    assert certificate.cells == (a,)
 
 
 def test_full_replica_chunks_cover_the_domain_without_oversized_digest() -> None:

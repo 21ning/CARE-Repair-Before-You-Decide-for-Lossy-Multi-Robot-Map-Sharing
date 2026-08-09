@@ -14,11 +14,12 @@ from cmvr.communication import (
     PATCH_HEADER_BYTES, REPLICA_DIGEST_BYTES, CommunicationBudget, DeltaPayload,
     DigestQuery, MessageKind, NetworkMessage, PSRConfig, PatchPayload,
     ReplicaPolicy, UnreliableNetwork, ack_token, belief_stamp, decode_ack,
-    deadline_decision_repair_plan,
+    ScenarioCertificate, deadline_decision_repair_plan, decision_candidate_cells,
     decode_delta, decode_digest_query, decode_patch, decode_replica_digest,
     encode_ack, encode_delta, encode_digest_query, encode_patch,
-    encode_replica_digest, full_replica_chunk, ordered_digest_peers,
-    planning_corridor, path_weight, replica_digest, update_from_belief,
+    encode_replica_digest, full_replica_chunk, minimum_scenario_certificate,
+    ordered_digest_peers, planning_corridor, path_weight, replica_digest,
+    scenario_blocked_sets, update_from_belief,
     update_stamp,
 )
 from cmvr.env.instance import EpisodeInstance
@@ -76,8 +77,16 @@ class PSRResult:
     deadline_infeasible_receivers: int
     deadline_query_cells: int
     mean_decision_slack: float | None
+    certificate_checks: int
+    certificate_scenario_planning_calls: int
+    certificate_conflicting_pairs: int
+    certificate_feasible_pairs: int
+    certificate_infeasible_pairs: int
+    certificate_candidate_cells: int
+    certificate_query_cells: int
     planning_cpu_ms: float = field(compare=False)
     utility_trigger_cpu_ms: float = field(compare=False)
+    certificate_cpu_ms: float = field(compare=False)
     episode_cpu_ms: float = field(compare=False)
 
     @property
@@ -140,7 +149,12 @@ class PSRClosedLoopRunner:
         self._deadline_feasible_receivers = self._deadline_infeasible_receivers = 0
         self._deadline_query_cells = 0
         self._decision_slacks: list[int] = []
+        self._certificate_checks = self._certificate_scenario_planning_calls = 0
+        self._certificate_conflicting_pairs = self._certificate_feasible_pairs = 0
+        self._certificate_infeasible_pairs = self._certificate_candidate_cells = 0
+        self._certificate_query_cells = 0
         self._planning_cpu_seconds = self._utility_trigger_cpu_seconds = 0.0
+        self._certificate_cpu_seconds = 0.0
 
     def run(self, instance: EpisodeInstance) -> PSRResult:
         if instance.map_size > 64:
@@ -159,8 +173,13 @@ class PSRClosedLoopRunner:
         self._deadline_feasible_receivers = self._deadline_infeasible_receivers = 0
         self._deadline_query_cells = 0
         self._decision_slacks = []
+        self._certificate_checks = self._certificate_scenario_planning_calls = 0
+        self._certificate_conflicting_pairs = self._certificate_feasible_pairs = 0
+        self._certificate_infeasible_pairs = self._certificate_candidate_cells = 0
+        self._certificate_query_cells = 0
         self._planning_cpu_seconds = 0.0
         self._utility_trigger_cpu_seconds = 0.0
+        self._certificate_cpu_seconds = 0.0
         seed_everything(instance.generation_seed)
         environment = pogema_v0(grid_config=GridConfig(
             seed=instance.generation_seed, size=instance.map_size, map=instance.obstacle_map.astype(int).tolist(),
@@ -231,8 +250,13 @@ class PSRClosedLoopRunner:
             self._deadline_feasible_receivers, self._deadline_infeasible_receivers,
             self._deadline_query_cells,
             float(np.mean(self._decision_slacks)) if self._decision_slacks else None,
+            self._certificate_checks, self._certificate_scenario_planning_calls,
+            self._certificate_conflicting_pairs, self._certificate_feasible_pairs,
+            self._certificate_infeasible_pairs, self._certificate_candidate_cells,
+            self._certificate_query_cells,
             self._planning_cpu_seconds * 1_000,
             self._utility_trigger_cpu_seconds * 1_000,
+            self._certificate_cpu_seconds * 1_000,
             (process_time() - episode_start) * 1_000,
         )
 
@@ -257,6 +281,7 @@ class PSRClosedLoopRunner:
             ReplicaPolicy.ACTION_TRIGGERED_REPAIR,
             ReplicaPolicy.UTILITY_TRIGGERED_REPAIR,
             ReplicaPolicy.DEADLINE_AWARE_REPAIR,
+            ReplicaPolicy.CERTIFICATE_REPAIR,
         } or (self.policy is ReplicaPolicy.PERIODIC_FULL_SYNC and not is_periodic_sync_step):
             self._send_delta_tasks(network, step, outboxes, data_budget, paths)
         if is_periodic_sync_step:
@@ -269,6 +294,8 @@ class PSRClosedLoopRunner:
             self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, utility_triggered=True, goals=goals)
         if self.policy is ReplicaPolicy.DEADLINE_AWARE_REPAIR and step % self.config.repair_interval_steps == 0:
             self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, deadline_aware=True, goals=goals)
+        if self.policy is ReplicaPolicy.CERTIFICATE_REPAIR and step % self.config.repair_interval_steps == 0:
+            self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, certificate_triggered=True, goals=goals)
         if self.policy is ReplicaPolicy.FULL_REPLICA_REPAIR and step % self.config.repair_interval_steps == 0:
             self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, full_replica=True)
         if self.policy is ReplicaPolicy.MISMATCH_TRIGGERED_FULL_REPAIR and step % self.config.repair_interval_steps == 0:
@@ -320,6 +347,7 @@ class PSRClosedLoopRunner:
                     ReplicaPolicy.FULL_REPLICA_REPAIR, ReplicaPolicy.MISMATCH_TRIGGERED_FULL_REPAIR,
                     ReplicaPolicy.ACTION_TRIGGERED_REPAIR, ReplicaPolicy.UTILITY_TRIGGERED_REPAIR,
                     ReplicaPolicy.DEADLINE_AWARE_REPAIR,
+                    ReplicaPolicy.CERTIFICATE_REPAIR,
                 }:
                     outbox.pop(key, None)
 
@@ -399,6 +427,7 @@ class PSRClosedLoopRunner:
         positions: tuple[Coordinate, ...], *, regional_only: bool, full_replica: bool = False,
         action_only: bool = False, utility_triggered: bool = False,
         deadline_aware: bool = False,
+        certificate_triggered: bool = False,
         goals: tuple[Coordinate, ...] | None = None,
     ) -> None:
         for requester_id, path in enumerate(paths):
@@ -419,12 +448,27 @@ class PSRClosedLoopRunner:
                 )
                 if not deadline_plan.cells:
                     continue
+            certificate = None
+            if certificate_triggered:
+                if goals is None:
+                    raise ValueError("certificate repair requires receiver goals")
+                certificate = self._certificate_plan(
+                    beliefs[requester_id], positions[requester_id],
+                    goals[requester_id], path, requester_id,
+                )
+                if not certificate.cells:
+                    continue
             if not regional_only and not full_replica:
                 self._corridor_query_receivers += 1
-            cells = deadline_plan.cells if deadline_plan is not None else self._query_cells(
-                path, beliefs[requester_id].shape, step,
-                full_replica=full_replica, action_only=action_only,
-            )
+            if deadline_plan is not None:
+                cells = deadline_plan.cells
+            elif certificate is not None:
+                cells = certificate.cells
+            else:
+                cells = self._query_cells(
+                    path, beliefs[requester_id].shape, step,
+                    full_replica=full_replica, action_only=action_only,
+                )
             if not cells:
                 continue
             payload = DigestQuery(cells, tuple(belief_stamp(beliefs[requester_id], cell) for cell in cells), regional_only, action_only)
@@ -625,6 +669,69 @@ class PSRClosedLoopRunner:
                     self._deadline_infeasible_receivers += 1
         self._deadline_query_cells += len(plan.cells)
         return plan
+
+    def _certificate_plan(
+        self, belief: BeliefMap, position: Coordinate, goal: Coordinate,
+        optimistic_path: tuple[Coordinate, ...], requester_id: int,
+    ) -> ScenarioCertificate:
+        """Solve the bounded scenario-separation certificate exactly."""
+        self._certificate_checks += 1
+        started = process_time()
+        candidates = decision_candidate_cells(
+            belief, optimistic_path,
+            max_horizon=self.config.corridor_horizon,
+            max_candidates=self.config.certificate_max_cells,
+        )
+        blocked_sets = scenario_blocked_sets(
+            candidates,
+            uncertainty_order=self.config.certificate_uncertainty_order,
+        )
+        base_map = self.adapter.to_planning_map(belief)
+        # The all-free scenario is anchored to the operational planner's
+        # current path. Canonical A* evaluates blocked counterfactuals on the
+        # shared unit-cost graph, avoiding dependence on incremental-cache
+        # update mechanics while retaining the receiver's actual next action.
+        scenario_planner = make_planner("astar")
+        scenario_paths: dict[frozenset[Coordinate], tuple[Coordinate, ...]] = {}
+        for blocked in blocked_sets:
+            if not blocked:
+                path = optimistic_path
+            else:
+                scenario_map = base_map.copy()
+                for cell in blocked:
+                    scenario_map[cell] = 1
+                path = scenario_planner.plan(
+                    scenario_map, position, goal,
+                ).path
+                self._certificate_scenario_planning_calls += 1
+            scenario_paths[blocked] = path[:self.config.corridor_horizon + 1]
+        certificate = minimum_scenario_certificate(
+            candidates, scenario_paths,
+            round_trip_steps=2 * self.config.link.delay_steps,
+        )
+        if self.config.link.delay_steps > 0:
+            # With positive transport latency, protect both the earliest
+            # feasible action distinctions and the later cell-entry
+            # commitment.  At zero delay the exact action certificate alone
+            # is sufficient and remains byte-minimal.
+            fallback = self._deadline_plan(
+                belief, position, goal, optimistic_path, requester_id,
+            )
+            union = tuple(dict.fromkeys(certificate.cells + fallback.cells))
+            certificate = ScenarioCertificate(
+                union, certificate.candidate_cells, certificate.scenario_count,
+                certificate.conflicting_pairs, certificate.feasible_pairs,
+                certificate.infeasible_pairs,
+            )
+        elapsed = process_time() - started
+        self._planning_cpu_seconds += elapsed
+        self._certificate_cpu_seconds += elapsed
+        self._certificate_conflicting_pairs += certificate.conflicting_pairs
+        self._certificate_feasible_pairs += certificate.feasible_pairs
+        self._certificate_infeasible_pairs += certificate.infeasible_pairs
+        self._certificate_candidate_cells += len(certificate.candidate_cells)
+        self._certificate_query_cells += len(certificate.cells)
+        return certificate
 
     @staticmethod
     def _action(path: tuple[Coordinate, ...], position: Coordinate) -> int:
