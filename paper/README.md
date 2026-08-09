@@ -1,6 +1,6 @@
 # Anonymous ICASSP paper package
 
-Compile `psr_icassp_draft.tex` from this directory with an IEEEtran-enabled
+Compile `care_icassp_draft.tex` from this directory with an IEEEtran-enabled
 LaTeX installation. The repository includes the final figures and concise
 derived tables used to audit the paper's numerical claims, including the CARE
 cross-planner deadline matrix and Periodic Full Anti-Entropy (K=4) control.
