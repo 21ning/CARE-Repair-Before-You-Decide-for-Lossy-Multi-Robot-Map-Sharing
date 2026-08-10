@@ -1,0 +1,38 @@
+instance_family: multifork_cluttered
+seed_count: 100
+map_size: 32
+obstacle_densities: [0.20]
+num_agents: 8
+observation_radius: 2
+observation_radii: [1, 2, 3]
+max_episode_steps: 25
+data_bytes_per_agent_per_step: 4459
+control_bytes_per_agent_per_step: 512
+max_digest_peers: 1
+repair_interval_steps: 1
+sync_interval_steps: 4
+corridor_horizon: 8
+corridor_radius: 1
+certificate_max_cells: 8
+certificate_uncertainty_order: 2
+digest_base_bytes: 16
+digest_entry_bytes: 6
+replica_digest_bytes: 16
+path_weighted_sigma: 1.0
+ack_bytes: 8
+patch_base_bytes: 4
+loss_probabilities: [0.30]
+delay_steps: [0]
+planners: [astar, dstar_lite]
+policies:
+  - one_shot_delta
+  - retry_all_arq
+  - path_weighted_arq
+  - utility_triggered_repair
+  - deadline_aware_repair
+  - path_aware_top_k_repair
+  - single_cell_sensitivity_repair
+  - certificate_repair
+link_seed: 20260808
+workers: 32
+output_directory: outputs/care_task_aware_baselines_fov_100map

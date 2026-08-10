@@ -2,7 +2,7 @@
 
 ## Frozen evidence
 
-All planned runs are complete: 52,400 episodes. Every policy-condition uses
+All planned runs are complete: 57,200 episodes. Every policy-condition uses
 100 physically distinct layouts, not merely 100 different seed labels. The
 same layout and deterministic packet-loss trace are shared by paired methods.
 Means and sample SDs use the 100 map-level observations; confidence intervals
@@ -16,6 +16,7 @@ methods within a layout/loss trace before resampling.
 | Link delay | 3,200 | delays 0/1/2/4 × 4 methods × A*/D* Lite |
 | Ablation and extension | 12,000 | density, random negative controls, q/cap/cadence, topology, scale |
 | Published reconciliation/FOV | 21,600 | 3 sensing ranges × 6 losses × 6 methods × A*/D* Lite |
+| Task-aware repair ladder | 4,800 | 3 sensing ranges × 8 methods × A*/D* Lite |
 
 Independent reruns of the overlapping 5×5 conditions agree on every
 non-timing output field (`care_cross_study_reproducibility.json`).
@@ -50,6 +51,27 @@ Scuttlebutt/Merkle/IBLT is respectively +0.0238 `[0.0088, 0.0387]`, +0.0650
 26.90/19.93/99.55 KB. D* Lite gives the same ordering. Merkle averages 23.51
 leaf repairs and IBLT decodes 87.51% of received sketches, so their weaker CSR
 is not caused by an inactive implementation.
+
+### Closest task-aware repair baselines
+
+The final 4,800-episode matrix adds Path-Aware Top-K and Single-Cell Decision
+Sensitivity under the exact CARE query--patch contract. All three methods use
+the same eight-cell/64-byte maximum query; the heuristics receive no realized
+CARE query length and perform no joint scenario enumeration.
+
+At 5×5, Path-Aware reaches 0.7275/0.7612 CSR with A*/D* Lite at 54.37/54.39
+KB; Single-Cell reaches 0.7325/0.7625 at 52.11/52.23 KB. CARE reaches
+0.7362/0.7688 at 53.25 KB. CARE minus Path-Aware is +0.0088
+`[0.0013, 0.0175]` and +0.0075 `[0.0000, 0.0150]` CSR while saving about
+1.1 KB. CARE minus Single-Cell is only +0.0037 `[-0.0037, 0.0125]` and
++0.0063 `[-0.0013, 0.0150]`, while CARE sends about 1.1/1.0 KB more.
+
+This rejects the broad claim that exact certification materially improves
+primary-condition reliability over every task-aware heuristic. Path awareness
+explains most of the gain. CARE contributes a bounded joint-scenario guarantee
+and compresses broad path/deadline queries; Single-Cell is the stronger
+lightweight empirical alternative. Full evidence is in
+`TASK_AWARE_BASELINES.md` and `paper/tables/care_task_aware_*`.
 
 ## Packet loss and delay
 

@@ -51,6 +51,8 @@ instance/loss trace。差别只在“何时修复”与“修复哪里”。
 | PSR-UT | 本地乐观/悲观下一动作不同且在 corridor 内 | 接收端当前路径 corridor |
 | CARE-Lite | 两条路径存在歧义且 query--patch 可在首次进入未知 cell 前返回 | 分叉到重合之间的一跳 action-graph 未知 influence set |
 | CARE | 存在仍可及时修复的动作冲突场景对 | 精确最小 scenario hitting set；正延迟时并入 route-commitment certificate |
+| Path-Aware Top-K | 路径附近存在 UNKNOWN 候选 | 按最早路径影响与图距离排序，查询共同 8-cell cap；不重规划 |
+| Single-Cell Sensitivity | 单独阻塞一个候选会改变可及时修复的路径动作 | action-change 优先、再按 divergence 排序；不构造联合场景 |
 | Scuttlebutt-Depth | 周期性交换 per-origin 最大版本 | backlog 最深的 origin 优先，同源 update 按旧到新发送 |
 | Dynamo-style Merkle AE | 会话内重试 16-ary 根/分支 hash，逐层恢复未匹配分支 | 深度优先定位不同 leaf，再发送该 cell；match ACK 使丢包后可继续 |
 | Partitioned IBLT | 对同一 peer 连续轮转 16 个空间分片并交换固定大小 sketch | subtract-and-peel 恢复该分片集合差，再发送 local-only records |
@@ -86,6 +88,8 @@ version、长度、保留位、字段边界与 Delta CRC，再重建 update 并�
 | `make_care_extension_artifacts.py` | extension analysis | paired ablation、density/topology/scale/negative-control 表图 |
 | `analyze_external_reconciliation.py` | 21,600-episode 三视野 published-baseline matrix | 完整性审计、均值/SD/CI、CARE 与 external 的配对效应、IBLT 解码率 |
 | `make_external_reconciliation_artifacts.py` | external-baseline analysis | 投稿主表、配对表和协议诊断表 |
+| `analyze_task_aware_baselines.py` | 4,800-episode 三视野 task-aware ladder | 物理地图审计、mean/SD/CI、全配对比较与机制计数 |
+| `make_task_aware_baseline_artifacts.py` | task-aware analysis | 新主表、FOV 表、closest-baseline 配对表与 compute/query 诊断 |
 
 所有 runner 拒绝覆盖非空输出目录。这是为了防止新运行静默混入已冻结的
 100-map 证据。完整命令见 `docs/REPRODUCIBILITY.md`。

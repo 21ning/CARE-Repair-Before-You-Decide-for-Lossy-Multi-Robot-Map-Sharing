@@ -289,6 +289,8 @@ def test_new_triggered_repairs_keep_ordinary_deltas_one_shot() -> None:
         ReplicaPolicy.UTILITY_TRIGGERED_REPAIR,
         ReplicaPolicy.DEADLINE_AWARE_REPAIR,
         ReplicaPolicy.CERTIFICATE_REPAIR,
+        ReplicaPolicy.PATH_AWARE_TOP_K_REPAIR,
+        ReplicaPolicy.SINGLE_CELL_SENSITIVITY_REPAIR,
     ):
         runner = PSRClosedLoopRunner(policy=policy, config=_config(loss=0.0))
         task = _DeliveryTask(update, receiver_id=1)
@@ -297,6 +299,48 @@ def test_new_triggered_repairs_keep_ordinary_deltas_one_shot() -> None:
         runner._send_delta_tasks(network, step=0, outboxes=outboxes, data_budget=[CommunicationBudget(update.encoded_size_bytes), CommunicationBudget(0)])
         assert task.key not in outboxes[0]
         assert task.attempts == 1
+
+
+def test_path_aware_top_k_repairs_under_the_same_eight_cell_query_cap() -> None:
+    result = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.PATH_AWARE_TOP_K_REPAIR,
+        config=replace(
+            _config(loss=0.0), repair_interval_steps=1,
+            certificate_max_cells=8,
+        ),
+    ).run(_instance())
+
+    assert result.task_aware_checks > 0
+    assert result.task_aware_candidate_cells >= result.task_aware_query_cells > 0
+    assert result.single_cell_planning_calls == 0
+    assert result.certificate_checks == 0
+    assert result.network_summary["attempted_control_bytes"] > 0
+
+
+def test_single_cell_sensitivity_replans_independently_without_joint_scenarios() -> None:
+    first = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.SINGLE_CELL_SENSITIVITY_REPAIR,
+        config=replace(
+            _config(loss=0.0), repair_interval_steps=1,
+            certificate_max_cells=8,
+        ),
+    ).run(_instance())
+    second = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.SINGLE_CELL_SENSITIVITY_REPAIR,
+        config=replace(
+            _config(loss=0.0), repair_interval_steps=1,
+            certificate_max_cells=8,
+        ),
+    ).run(_instance())
+
+    assert first == second
+    assert first.task_aware_checks > 0
+    assert first.single_cell_planning_calls > 0
+    assert first.single_cell_sensitive_cells > 0
+    assert first.task_aware_query_cells > 0
+    assert first.certificate_checks == 0
+    assert first.certificate_scenario_planning_calls == 0
+    assert first.network_summary["attempted_control_bytes"] > 0
 
 
 def test_deadline_aware_repair_records_feasibility_and_witness_cells() -> None:

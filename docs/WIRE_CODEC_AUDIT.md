@@ -16,7 +16,9 @@ CARE 的网络层只传输真实固定宽度 `bytes`，不直接传 Python 对�
 - 字段范围覆盖冻结实验的 64×64 地图、32 agents 和 64 steps；
 - codec、transport、runner、周期同步和三个 published reconciliation
   baseline 均由自动测试覆盖；
-- 52,400-episode 最终证据中所有策略使用同一 codec 和计费路径。
+- 57,200-episode 最终证据中所有策略使用同一 codec 和计费路径；
+- Path-Aware、Single-Cell 与 CARE 共享 8-cell/64-B 最大 query，实际长度均由
+  同一 encoder 生成并计费。
 
 运行审计测试：
 

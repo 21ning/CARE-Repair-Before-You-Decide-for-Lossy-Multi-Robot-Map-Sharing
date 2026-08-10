@@ -17,7 +17,8 @@ from cmvr.communication import (
     CommunicationBudget, DeltaPayload, DigestQuery, IBLTSketch, MerkleChildren,
     MerkleMatch, MerkleProbe, MerkleTree, MessageKind, NetworkMessage, PSRConfig, PatchPayload,
     ReplicaPolicy, UnreliableNetwork, ack_token, belief_stamp, decode_ack,
-    ScenarioCertificate, deadline_decision_repair_plan, decision_candidate_cells,
+    ScenarioCertificate, TaskAwareRepairPlan, deadline_decision_repair_plan,
+    decision_candidate_cells,
     ScuttleDigest, build_iblt, decode_delta, decode_digest_query,
     decode_iblt_sketch, decode_merkle_children, decode_merkle_match,
     decode_merkle_probe, decode_patch,
@@ -25,9 +26,11 @@ from cmvr.communication import (
     encode_digest_query, encode_iblt_sketch, encode_merkle_children,
     encode_merkle_match, encode_merkle_probe, encode_patch, encode_replica_digest,
     encode_scuttle_digest, full_replica_chunk, minimum_scenario_certificate,
-    ordered_digest_peers, peel_iblt, planning_corridor, path_weight,
+    ordered_digest_peers, path_aware_top_k_plan, peel_iblt, planning_corridor,
+    path_weight,
     record_scuttle_update, replica_digest, scenario_blocked_sets,
-    scuttle_depth_updates, scuttle_max_versions, subtract_iblt,
+    scuttle_depth_updates, scuttle_max_versions, single_cell_sensitivity_plan,
+    subtract_iblt,
     update_from_belief, update_stamp,
 )
 from cmvr.env.instance import EpisodeInstance, critical_decision_pairs
@@ -106,6 +109,12 @@ class PSRResult:
     mean_visibility_gap_steps: float | None
     mean_usable_communication_window_steps: float | None
     decision_before_self_observation_rate: float | None
+    task_aware_checks: int
+    task_aware_candidate_cells: int
+    task_aware_query_cells: int
+    single_cell_planning_calls: int
+    single_cell_sensitive_cells: int
+    single_cell_infeasible_cells: int
     scuttle_digest_exchanges: int
     scuttle_patch_updates: int
     merkle_nodes_compared: int
@@ -113,6 +122,7 @@ class PSRResult:
     iblt_decode_attempts: int
     iblt_decode_successes: int
     iblt_patch_updates: int
+    task_aware_cpu_ms: float = field(compare=False)
     planning_cpu_ms: float = field(compare=False)
     utility_trigger_cpu_ms: float = field(compare=False)
     certificate_cpu_ms: float = field(compare=False)
@@ -184,6 +194,9 @@ class PSRClosedLoopRunner:
         self._certificate_query_cells = 0
         self._certificate_candidate_cap_checks = self._certificate_candidate_cap_hits = 0
         self._certificate_uncapped_candidate_cells = 0
+        self._task_aware_checks = self._task_aware_candidate_cells = 0
+        self._task_aware_query_cells = self._single_cell_planning_calls = 0
+        self._single_cell_sensitive_cells = self._single_cell_infeasible_cells = 0
         self._scuttle_digest_exchanges = self._scuttle_patch_updates = 0
         self._merkle_nodes_compared = self._merkle_leaf_repairs = 0
         self._iblt_decode_attempts = self._iblt_decode_successes = 0
@@ -193,6 +206,7 @@ class PSRClosedLoopRunner:
         self._merkle_cache: dict[int, tuple[str, MerkleTree]] = {}
         self._merkle_pending: dict[tuple[int, int], set[int]] = {}
         self._iblt_cache: dict[tuple[int, int], tuple[str, IBLTSketch]] = {}
+        self._task_aware_cpu_seconds = 0.0
         self._planning_cpu_seconds = self._utility_trigger_cpu_seconds = 0.0
         self._certificate_cpu_seconds = 0.0
 
@@ -239,6 +253,9 @@ class PSRClosedLoopRunner:
         self._certificate_query_cells = 0
         self._certificate_candidate_cap_checks = self._certificate_candidate_cap_hits = 0
         self._certificate_uncapped_candidate_cells = 0
+        self._task_aware_checks = self._task_aware_candidate_cells = 0
+        self._task_aware_query_cells = self._single_cell_planning_calls = 0
+        self._single_cell_sensitive_cells = self._single_cell_infeasible_cells = 0
         self._scuttle_digest_exchanges = self._scuttle_patch_updates = 0
         self._merkle_nodes_compared = self._merkle_leaf_repairs = 0
         self._iblt_decode_attempts = self._iblt_decode_successes = 0
@@ -248,6 +265,7 @@ class PSRClosedLoopRunner:
         self._merkle_cache = {}
         self._merkle_pending = {}
         self._iblt_cache = {}
+        self._task_aware_cpu_seconds = 0.0
         self._planning_cpu_seconds = 0.0
         self._utility_trigger_cpu_seconds = 0.0
         self._certificate_cpu_seconds = 0.0
@@ -386,10 +404,14 @@ class PSRClosedLoopRunner:
             float(np.mean(visibility_gaps)) if visibility_gaps else None,
             float(np.mean(usable_windows)) if usable_windows else None,
             float(np.mean(decision_before_self)) if decision_before_self else None,
+            self._task_aware_checks, self._task_aware_candidate_cells,
+            self._task_aware_query_cells, self._single_cell_planning_calls,
+            self._single_cell_sensitive_cells, self._single_cell_infeasible_cells,
             self._scuttle_digest_exchanges, self._scuttle_patch_updates,
             self._merkle_nodes_compared, self._merkle_leaf_repairs,
             self._iblt_decode_attempts, self._iblt_decode_successes,
             self._iblt_patch_updates,
+            self._task_aware_cpu_seconds * 1_000,
             self._planning_cpu_seconds * 1_000,
             self._utility_trigger_cpu_seconds * 1_000,
             self._certificate_cpu_seconds * 1_000,
@@ -420,6 +442,8 @@ class PSRClosedLoopRunner:
             ReplicaPolicy.UTILITY_TRIGGERED_REPAIR,
             ReplicaPolicy.DEADLINE_AWARE_REPAIR,
             ReplicaPolicy.CERTIFICATE_REPAIR,
+            ReplicaPolicy.PATH_AWARE_TOP_K_REPAIR,
+            ReplicaPolicy.SINGLE_CELL_SENSITIVITY_REPAIR,
             ReplicaPolicy.MERKLE_ANTI_ENTROPY,
             ReplicaPolicy.IBLT_RECONCILIATION,
         } or (self.policy is ReplicaPolicy.PERIODIC_FULL_SYNC and not is_periodic_sync_step):
@@ -436,6 +460,10 @@ class PSRClosedLoopRunner:
             self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, deadline_aware=True, goals=goals)
         if self.policy is ReplicaPolicy.CERTIFICATE_REPAIR and step % self.config.repair_interval_steps == 0:
             self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, certificate_triggered=True, goals=goals)
+        if self.policy is ReplicaPolicy.PATH_AWARE_TOP_K_REPAIR and step % self.config.repair_interval_steps == 0:
+            self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, path_aware_top_k=True)
+        if self.policy is ReplicaPolicy.SINGLE_CELL_SENSITIVITY_REPAIR and step % self.config.repair_interval_steps == 0:
+            self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, single_cell_sensitive=True, goals=goals)
         if self.policy is ReplicaPolicy.FULL_REPLICA_REPAIR and step % self.config.repair_interval_steps == 0:
             self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, full_replica=True)
         if self.policy is ReplicaPolicy.MISMATCH_TRIGGERED_FULL_REPAIR and step % self.config.repair_interval_steps == 0:
@@ -494,6 +522,8 @@ class PSRClosedLoopRunner:
                     ReplicaPolicy.ACTION_TRIGGERED_REPAIR, ReplicaPolicy.UTILITY_TRIGGERED_REPAIR,
                     ReplicaPolicy.DEADLINE_AWARE_REPAIR,
                     ReplicaPolicy.CERTIFICATE_REPAIR,
+                    ReplicaPolicy.PATH_AWARE_TOP_K_REPAIR,
+                    ReplicaPolicy.SINGLE_CELL_SENSITIVITY_REPAIR,
                     ReplicaPolicy.MERKLE_ANTI_ENTROPY,
                     ReplicaPolicy.IBLT_RECONCILIATION,
                 }:
@@ -666,6 +696,8 @@ class PSRClosedLoopRunner:
         action_only: bool = False, utility_triggered: bool = False,
         deadline_aware: bool = False,
         certificate_triggered: bool = False,
+        path_aware_top_k: bool = False,
+        single_cell_sensitive: bool = False,
         goals: tuple[Coordinate, ...] | None = None,
     ) -> None:
         for requester_id, path in enumerate(paths):
@@ -696,12 +728,30 @@ class PSRClosedLoopRunner:
                 )
                 if not certificate.cells:
                     continue
+            task_aware_plan = None
+            if path_aware_top_k:
+                task_aware_plan = self._path_aware_top_k_plan(
+                    beliefs[requester_id], path,
+                )
+                if not task_aware_plan.cells:
+                    continue
+            if single_cell_sensitive:
+                if goals is None:
+                    raise ValueError("single-cell sensitivity requires receiver goals")
+                task_aware_plan = self._single_cell_sensitivity_plan(
+                    beliefs[requester_id], positions[requester_id],
+                    goals[requester_id], path,
+                )
+                if not task_aware_plan.cells:
+                    continue
             if not regional_only and not full_replica:
                 self._corridor_query_receivers += 1
             if deadline_plan is not None:
                 cells = deadline_plan.cells
             elif certificate is not None:
                 cells = certificate.cells
+            elif task_aware_plan is not None:
+                cells = task_aware_plan.cells
             else:
                 cells = self._query_cells(
                     path, beliefs[requester_id].shape, step,
@@ -1169,9 +1219,10 @@ class PSRClosedLoopRunner:
         )
         self._certificate_candidate_cap_checks += 1
         self._certificate_uncapped_candidate_cells += len(uncapped_candidates)
-        if len(uncapped_candidates) > self.config.certificate_max_cells:
+        candidate_cap = self._task_aware_query_cap()
+        if len(uncapped_candidates) > candidate_cap:
             self._certificate_candidate_cap_hits += 1
-        candidates = uncapped_candidates[:self.config.certificate_max_cells]
+        candidates = uncapped_candidates[:candidate_cap]
         blocked_sets = scenario_blocked_sets(
             candidates,
             uncertainty_order=self.config.certificate_uncertainty_order,
@@ -1222,6 +1273,68 @@ class PSRClosedLoopRunner:
         self._certificate_candidate_cells += len(certificate.candidate_cells)
         self._certificate_query_cells += len(certificate.cells)
         return certificate
+
+    def _task_aware_query_cap(self) -> int:
+        """Shared cell/byte cap used by heuristics and exact CARE."""
+        return min(
+            self.config.certificate_max_cells,
+            self.config.max_digest_cells_per_message(),
+        )
+
+    def _path_aware_top_k_plan(
+        self, belief: BeliefMap, optimistic_path: tuple[Coordinate, ...],
+    ) -> TaskAwareRepairPlan:
+        """Select path-proximal candidates without any counterfactual plan."""
+        started = process_time()
+        plan = path_aware_top_k_plan(
+            belief, optimistic_path,
+            max_horizon=self.config.corridor_horizon,
+            max_cells=self._task_aware_query_cap(),
+        )
+        self._task_aware_cpu_seconds += process_time() - started
+        self._task_aware_checks += 1
+        self._task_aware_candidate_cells += len(plan.candidate_cells)
+        self._task_aware_query_cells += len(plan.cells)
+        return plan
+
+    def _single_cell_sensitivity_plan(
+        self, belief: BeliefMap, position: Coordinate, goal: Coordinate,
+        optimistic_path: tuple[Coordinate, ...],
+    ) -> TaskAwareRepairPlan:
+        """Replan each candidate alone, without joint scenario enumeration."""
+        started = process_time()
+        uncapped = decision_candidate_cells(
+            belief, optimistic_path,
+            max_horizon=self.config.corridor_horizon,
+            max_candidates=None,
+        )
+        candidates = uncapped[:self._task_aware_query_cap()]
+        base_map = self.adapter.to_planning_map(belief)
+        scenario_planner = make_planner("astar")
+        blocked_paths = {}
+        for cell in candidates:
+            blocked_map = base_map.copy()
+            blocked_map[cell] = 1
+            blocked_paths[cell] = scenario_planner.plan(
+                blocked_map, position, goal,
+            ).path[:self.config.corridor_horizon + 1]
+            self._single_cell_planning_calls += 1
+        plan = single_cell_sensitivity_plan(
+            candidates,
+            optimistic_path[:self.config.corridor_horizon + 1],
+            blocked_paths,
+            round_trip_steps=2 * self.config.link.delay_steps,
+            max_cells=self._task_aware_query_cap(),
+        )
+        elapsed = process_time() - started
+        self._task_aware_cpu_seconds += elapsed
+        self._planning_cpu_seconds += elapsed
+        self._task_aware_checks += 1
+        self._task_aware_candidate_cells += len(uncapped)
+        self._task_aware_query_cells += len(plan.cells)
+        self._single_cell_sensitive_cells += plan.sensitive_cells
+        self._single_cell_infeasible_cells += plan.infeasible_cells
+        return plan
 
     @staticmethod
     def _sensor_contains(position: Coordinate, cell: Coordinate, radius: int) -> bool:

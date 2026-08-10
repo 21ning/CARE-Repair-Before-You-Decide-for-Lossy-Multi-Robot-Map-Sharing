@@ -3,7 +3,8 @@ from __future__ import annotations
 from cmvr.communication import (
     deadline_decision_repair_plan, decision_candidate_cells, first_path_divergence, full_replica_chunk,
     minimum_scenario_certificate, ordered_digest_peers, planning_corridor,
-    replica_digest, scenario_blocked_sets,
+    path_aware_top_k_plan, replica_digest, scenario_blocked_sets,
+    single_cell_sensitivity_plan,
 )
 from cmvr.mapping import BeliefMap, MapUpdate
 
@@ -96,6 +97,45 @@ def test_candidate_cap_can_be_audited_against_the_uncapped_set() -> None:
     )
     assert len(uncapped) > 4
     assert capped == uncapped[:4]
+
+
+def test_path_aware_top_k_uses_earliest_path_influence_without_replanning() -> None:
+    belief = BeliefMap((7, 7))
+    path = ((3, 1), (3, 2), (3, 3), (3, 4))
+    plan = path_aware_top_k_plan(
+        belief, path, max_horizon=3, max_cells=3,
+    )
+
+    assert len(plan.candidate_cells) > len(plan.cells)
+    assert plan.cells == plan.candidate_cells[:3]
+    assert plan.cells[0] == (3, 2)
+    assert plan.sensitive_cells == 0
+
+
+def test_single_cell_sensitivity_ranks_actions_and_enforces_deadline() -> None:
+    a, b, c = (1, 1), (1, 2), (1, 3)
+    optimistic = ((3, 1), (3, 2), (3, 3), (3, 4))
+    immediate = ((3, 1), (2, 1), (2, 2), (2, 3))
+    later = ((3, 1), (3, 2), (2, 2), (2, 3))
+    unchanged = optimistic
+
+    zero_delay = single_cell_sensitivity_plan(
+        (a, b, c), optimistic,
+        {a: later, b: immediate, c: unchanged},
+        round_trip_steps=0, max_cells=2,
+    )
+    assert zero_delay.cells == (b, a)
+    assert zero_delay.sensitive_cells == 2
+    assert zero_delay.infeasible_cells == 0
+
+    delayed = single_cell_sensitivity_plan(
+        (a, b, c), optimistic,
+        {a: later, b: immediate, c: unchanged},
+        round_trip_steps=1, max_cells=2,
+    )
+    assert delayed.cells == (a,)
+    assert delayed.sensitive_cells == 2
+    assert delayed.infeasible_cells == 1
 
 
 def test_scenario_certificate_tie_break_is_deterministic() -> None:

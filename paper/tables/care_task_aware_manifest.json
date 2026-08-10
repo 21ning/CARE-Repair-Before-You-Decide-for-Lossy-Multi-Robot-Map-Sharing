@@ -1,0 +1,31 @@
+{
+  "complete": true,
+  "episodes": 4800,
+  "workers": 32,
+  "trace_rows": 119053,
+  "independent_maps_per_condition": 100,
+  "unique_physical_layouts": 100,
+  "fovs": [
+    "3x3",
+    "5x5",
+    "7x7"
+  ],
+  "planners": [
+    "astar",
+    "dstar_lite"
+  ],
+  "policies": [
+    "one_shot_delta",
+    "retry_all_arq",
+    "path_weighted_arq",
+    "utility_triggered_repair",
+    "deadline_aware_repair",
+    "path_aware_top_k_repair",
+    "single_cell_sensitivity_repair",
+    "certificate_repair"
+  ],
+  "loss_probability": 0.3,
+  "delay_steps": 0,
+  "query_contract": "same 8-cell/64-byte maximum query, query-patch codec, peer schedule, loss trace and byte accounting for Path-Aware, Single-Cell and CARE",
+  "confidence_interval": "20000-draw map-cluster bootstrap; paired differences preserve map and deterministic loss trace"
+}

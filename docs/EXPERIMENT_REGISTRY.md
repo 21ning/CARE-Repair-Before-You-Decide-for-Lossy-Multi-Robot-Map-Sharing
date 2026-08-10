@@ -16,6 +16,7 @@ regeneration code are retained.
 | CARE-topology | 3 topologies × 6 policies × A*/D* | 3,600 | complete | `care_extensions.*` |
 | CARE-scale | 4/8/16/32 agents × 4 policies | 1,600 | complete | `care_extensions.*` |
 | CARE-external-reconciliation-FOV | 3 FOVs × 6 losses × 3 published methods + 3 anchors × A*/D* | 21,600 | complete | `care_external_baselines_*`, protocol diagnostics |
+| CARE-task-aware-ladder-FOV | 3 FOVs × 8 ladder methods × A*/D* | 4,800 | complete | `care_task_aware_*`, paired and mechanism diagnostics |
 
 The overlapping primary conditions were launched independently in four studies.
 `care_cross_study_reproducibility.json` verifies 1,600 FOV, 800 delay and

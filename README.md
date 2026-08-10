@@ -8,6 +8,12 @@ it with a locally derived route-commitment certificate under positive delay.
 The earlier fixed-corridor PSR-UT and rule-based CARE-Lite remain matched
 ablations.
 
+Two closest task-aware baselines make the method ladder explicit. Path-Aware
+Top-K repairs the earliest path-adjacent cells without replanning; Single-Cell
+Sensitivity independently blocks each candidate and ranks the resulting path
+divergence. They share CARE's eight-cell query cap and complete query--patch
+communication contract, but neither enumerates joint scenarios.
+
 The repository also contains three adapted, published reconciliation
 baselines: Scuttlebutt-Depth, Dynamo-style Merkle anti-entropy, and partitioned
 IBLT set reconciliation. They use the same replicas, planner, lossy link,
@@ -86,6 +92,14 @@ Merkle AE and partitioned IBLT actively repair differences but reach
 [docs/EXTERNAL_BASELINES.md](docs/EXTERNAL_BASELINES.md).
 The retained paper tables also include CARE-versus-external and
 external-versus-One-shot paired confidence intervals for every sensing range.
+
+The closest task-aware comparison is deliberately more nuanced. At 5×5,
+Path-Aware Top-K reaches 0.7275/0.7612 CSR with A*/D* Lite at about 54.4 KB,
+and Single-Cell Sensitivity reaches 0.7325/0.7625 at about 52.2 KB. CARE reaches
+0.7362/0.7688 at 53.25 KB. CARE's paired advantage over Path-Aware is small but
+positive; its advantage over Single-Cell is not statistically detected. See
+[docs/TASK_AWARE_BASELINES.md](docs/TASK_AWARE_BASELINES.md) for the exact
+contract, confidence intervals and resulting claim boundary.
 
 The implementation separates mapping, communication, planning, and environment
 execution so that the protocol can be inspected or replaced independently.
@@ -212,6 +226,20 @@ python scripts/make_external_reconciliation_artifacts.py \
 Implementation fidelity and the precise adaptations needed for bounded robot
 messages are documented in
 [docs/EXTERNAL_BASELINES.md](docs/EXTERNAL_BASELINES.md).
+
+Run the three-FOV task-aware ladder:
+
+```bash
+python scripts/run_psr_suite.py \
+  --config configs/care_task_aware_baselines_fov_100map.yaml \
+  --output-directory /tmp/care-task-aware --workers 32
+python scripts/analyze_task_aware_baselines.py \
+  --input-directory /tmp/care-task-aware \
+  --output-directory /tmp/care-task-aware-analysis
+python scripts/make_task_aware_baseline_artifacts.py \
+  --analysis-directory /tmp/care-task-aware-analysis \
+  --table-directory paper/tables
+```
 
 Additional commands for topology, scale, delay, and ablation configurations
 are documented in [docs/REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md).

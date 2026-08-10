@@ -38,6 +38,8 @@ class ReplicaPolicy(str, Enum):
     UTILITY_TRIGGERED_REPAIR = "utility_triggered_repair"
     DEADLINE_AWARE_REPAIR = "deadline_aware_repair"
     CERTIFICATE_REPAIR = "certificate_repair"
+    PATH_AWARE_TOP_K_REPAIR = "path_aware_top_k_repair"
+    SINGLE_CELL_SENSITIVITY_REPAIR = "single_cell_sensitivity_repair"
     SCUTTLEBUTT_DEPTH = "scuttlebutt_depth"
     MERKLE_ANTI_ENTROPY = "merkle_anti_entropy"
     IBLT_RECONCILIATION = "iblt_reconciliation"
@@ -158,6 +160,16 @@ class ScenarioCertificate:
     infeasible_pairs: int
 
 
+@dataclass(frozen=True)
+class TaskAwareRepairPlan:
+    """Heuristic query plan without joint uncertainty scenarios."""
+
+    cells: tuple[Coordinate, ...]
+    candidate_cells: tuple[Coordinate, ...]
+    sensitive_cells: int = 0
+    infeasible_cells: int = 0
+
+
 def decision_candidate_cells(
     belief: BeliefMap, optimistic_path: tuple[Coordinate, ...], *,
     max_horizon: int, max_candidates: int | None,
@@ -179,6 +191,66 @@ def decision_candidate_cells(
             priority[cell] = min(priority.get(cell, key), key)
     ordered = tuple(sorted(priority, key=priority.__getitem__))
     return ordered if max_candidates is None else ordered[:max_candidates]
+
+
+def path_aware_top_k_plan(
+    belief: BeliefMap, optimistic_path: tuple[Coordinate, ...], *,
+    max_horizon: int, max_cells: int,
+) -> TaskAwareRepairPlan:
+    """Take the earliest and closest path-adjacent unknown cells.
+
+    This is deliberately a path heuristic: it neither replans a
+    counterfactual map nor enumerates joint occupancy scenarios.  Candidate
+    ordering is earliest future path index, then graph distance and coordinate.
+    """
+    if max_cells < 0:
+        raise ValueError("max_cells must be non-negative")
+    candidates = decision_candidate_cells(
+        belief, optimistic_path,
+        max_horizon=max_horizon, max_candidates=None,
+    )
+    return TaskAwareRepairPlan(candidates[:max_cells], candidates)
+
+
+def single_cell_sensitivity_plan(
+    candidates: tuple[Coordinate, ...],
+    optimistic_path: tuple[Coordinate, ...],
+    blocked_paths: dict[Coordinate, tuple[Coordinate, ...]],
+    *, round_trip_steps: int, max_cells: int,
+) -> TaskAwareRepairPlan:
+    """Rank independent blocked-cell counterfactuals by action sensitivity.
+
+    Immediate next-action changes rank first, followed by the earliest later
+    path divergence.  A cell whose first divergence precedes the query--patch
+    round trip is recorded but excluded because its information cannot arrive
+    in time.  Unlike CARE, this function never compares multi-cell scenarios
+    and never solves a hitting set.
+    """
+    if round_trip_steps < 0 or max_cells < 0:
+        raise ValueError("deadline and query bounds must be non-negative")
+    if len(set(candidates)) != len(candidates):
+        raise ValueError("candidate cells must be unique")
+    if set(blocked_paths) != set(candidates):
+        raise ValueError("each candidate requires exactly one blocked path")
+    ranked: list[tuple[tuple[bool, int, int], Coordinate]] = []
+    sensitive = infeasible = 0
+    for candidate_index, cell in enumerate(candidates):
+        divergence = first_path_divergence(
+            optimistic_path, blocked_paths[cell],
+        )
+        if divergence is None:
+            continue
+        sensitive += 1
+        if divergence < round_trip_steps:
+            infeasible += 1
+            continue
+        ranked.append(((divergence != 0, divergence, candidate_index), cell))
+    ranked.sort(key=lambda item: item[0])
+    selected = tuple(cell for _, cell in ranked[:max_cells])
+    return TaskAwareRepairPlan(
+        selected, candidates, sensitive_cells=sensitive,
+        infeasible_cells=infeasible,
+    )
 
 
 def scenario_blocked_sets(

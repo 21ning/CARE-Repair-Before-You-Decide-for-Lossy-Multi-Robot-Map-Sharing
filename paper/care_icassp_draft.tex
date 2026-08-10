@@ -19,14 +19,17 @@ versioned anti-entropy protocol that computes a minimum decision certificate.
 CARE enumerates a bounded sparse occupancy-scenario family and solves an exact
 hitting-set problem whose queried cells distinguish all still-repairable action
 classes. A route-commitment certificate accounts for query--patch latency. We
-evaluate 52,400 episodes, each condition using 100 physically distinct maps
+evaluate 57,200 episodes, each condition using 100 physically distinct maps
 paired across methods. In the primary 5$\times$5-sensing condition at 30\%
 loss, CARE improves completion success from 0.6713 to 0.7362 with A* and from
 0.6900 to 0.7688 with D* Lite, adding only 5.63/5.47~KB over one-shot sharing.
-It saves about 101~KB relative to Retry-All ARQ while giving up 0.0225/0.0175
-success. Sensor, delay, topology, random-map, and compute controls delimit the
-claim: CARE is a decision-critical low-traffic reliability point, not a
-universal replacement for reliable delivery.
+Path-aware heuristics recover most of this gain. Relative to a matched
+path-only Top-K repair, CARE gains 0.0088/0.0075 success while sending about
+1.1~KB less; relative to a stronger single-cell decision test, the reliability
+difference is not statistically detected. Sensor, delay, topology, random-map,
+and compute controls delimit the claim: CARE is a bounded joint-scenario
+certificate and low-traffic reliability point, not a universal replacement for
+reliable delivery.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -59,11 +62,11 @@ Our contributions are: (i) a codec-priced optimization with an exact
 scenario-separation condition; (ii) a dual certificate combining action
 identifiability with a deadline derived from route commitment and measured
 query--patch latency; (iii) a bounded online solver with explicit complexity
-and guarantee limits; and (iv) a 52,400-episode evaluation with paired
-map-cluster inference, three published reconciliation baselines, controlled
-baselines and full-method ablations, two planners,
-three sensing ranges, loss/delay sweeps, density/topology/scale extensions, and
-random-map negative controls.
+and guarantee limits; and (iv) a 57,200-episode evaluation with paired
+map-cluster inference, three published reconciliation baselines, two matched
+task-aware heuristics, controlled baselines and full-method ablations, two
+planners, three sensing ranges, loss/delay sweeps, density/topology/scale
+extensions, and random-map negative controls.
 
 \section{Decision-Critical Replica Repair}
 Each robot maintains a versioned occupancy map $M_i^t$. A deterministic stamp
@@ -140,6 +143,17 @@ per-origin version maxima and depth ordering; Merkle uses acknowledged,
 loss-retried depth-first traversal; IBLT rotates 491-byte sketches through a
 complete peer session. None receives path, goal or certificate information.
 
+The closest 4,800-episode comparison holds the query--patch contract fixed and
+crosses three sensing ranges, both planners, eight policies and 100 maps.
+Path-Aware Top-K ranks UNKNOWN cells on or one hop from the next eight path
+vertices by earliest path influence, querying up to the common eight-cell
+(64-byte) cap without replanning. Single-Cell Decision Sensitivity independently
+blocks each candidate, performs one canonical replan and ranks cells whose
+action sequence diverges no earlier than the measured round trip. It neither
+enumerates joint scenarios nor solves a hitting set. Thus these baselines test
+whether gains require merely path information, independent counterfactuals, or
+CARE's joint action-class certificate.
+
 We additionally record the peer's first observation of the critical obstacle,
 the seeker's first local observation, route commitment, the signed repair
 window, and candidate-cap saturation. Conditional timing means always include
@@ -147,7 +161,7 @@ event coverage. Independent reruns of overlapping 5$\times$5 conditions agree
 on every non-timing output field.
 
 \section{Results}
-Table~\ref{tab:primary} shows the primary point. CARE improves A* success over
+Table~\ref{tab:primary} shows the primary task-aware ladder. CARE improves A* success over
 One-shot by $+0.0650$ (paired 95\% CI $[+0.0488,+0.0813]$; standardized paired
 effect $d_z=0.789$) for $+5.63$~KB. With D* Lite the gain is $+0.0788$
 ($[+0.0612,+0.0963]$, $d_z=0.875$) for $+5.47$~KB. Relative to Retry-All,
@@ -155,6 +169,16 @@ CARE saves 101.20/101.75~KB but yields 0.0225/0.0175 lower success. Thus CARE
 occupies a low-traffic point rather than the maximum-reliability endpoint.
 Compared with PSR-UT and CARE-Lite, CARE is statistically indistinguishable in
 success while saving about 9.5 and 3.8~KB, respectively.
+Path-Aware Top-K recovers $+0.0563$ A* and $+0.0712$ D* Lite success over
+One-shot without counterfactual planning. CARE exceeds it by only
+$+0.0088$ ($[+0.0013,+0.0175]$) and $+0.0075$
+($[+0.0000,+0.0150]$), while sending 1.12/1.13~KB less. Single-Cell
+Sensitivity is stronger per byte: CARE--Single-Cell is $+0.0037$
+($[-0.0037,+0.0125]$) and $+0.0063$ ($[-0.0013,+0.0150]$), with CARE sending
+1.14/1.03~KB more. Hence path awareness explains most of the improvement; the
+exact certificate contributes a declared joint-scenario guarantee and some
+compression relative to broad path repair, but not detected reliability
+dominance over every task-aware heuristic.
 Among published methods, Scuttlebutt is strongest: CARE improves over it by
 $+0.0238$ ($[+0.0088,+0.0387]$) with A* and $+0.0400$
 ($[+0.0225,+0.0575]$) with D* Lite while saving 26.90/27.54~KB. CARE also
@@ -162,26 +186,24 @@ exceeds Merkle by 0.0650/0.0788 and IBLT by 0.0550/0.0725, saving
 19.93--99.62~KB.
 
 \begin{table}[t]
-\caption{Primary 5$\times$5 condition at 30\% loss (100 maps).}
+\caption{Primary task-aware ladder: 5$\times$5 sensing, 30\% loss, 100 maps.}
 \label{tab:primary}
 \centering
 \small
-\begin{tabular}{llcc}
+\begin{tabular}{lrrrr}
 \toprule
-Planner & Method & CSR & Attempted KB \\
+Method & \multicolumn{2}{c}{A*} & \multicolumn{2}{c}{D* Lite} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+& CSR & KB & CSR & KB \\
 \midrule
-A* & One-shot & .6713 & 47.62 \\
-A* & Retry-All ARQ & .7588 & 154.45 \\
-A* & Scuttlebutt-Depth & .7125 & 80.15 \\
-A* & Merkle AE & .6713 & 73.18 \\
-A* & Partitioned IBLT & .6813 & 152.80 \\
-A* & CARE & \textbf{.7362} & 53.25 \\
-D* Lite & One-shot & .6900 & 47.78 \\
-D* Lite & Retry-All ARQ & .7863 & 155.00 \\
-D* Lite & Scuttlebutt-Depth & .7288 & 80.80 \\
-D* Lite & Merkle AE & .6900 & 73.56 \\
-D* Lite & Partitioned IBLT & .6963 & 152.87 \\
-D* Lite & CARE & \textbf{.7688} & 53.25 \\
+One-shot & .6713 & 47.62 & .6900 & 47.78 \\
+Retry-All ARQ & .7588 & 154.45 & .7863 & 155.00 \\
+Path-Weighted ARQ & .7588 & 154.50 & .7863 & 155.09 \\
+PSR-UT & .7350 & 62.71 & .7638 & 62.74 \\
+CARE-Lite & .7400 & 57.00 & .7712 & 57.06 \\
+Path-Aware Top-K & .7275 & 54.37 & .7612 & 54.39 \\
+Single-Cell Sens. & .7325 & 52.11 & .7625 & 52.23 \\
+CARE & .7362 & 53.25 & .7688 & 53.25 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -235,7 +257,9 @@ exactness is a measured cost and CARE-Lite remains a practical approximation.
 CARE turns decision-critical replica repair into a codec-priced constrained
 communication algorithm. Exact scenario separation produces a minimum action
 certificate and route commitment supplies its deadline. Matched A* and D* Lite
-results, including three published reconciliation algorithms, support a
+results, including three published reconciliation algorithms and two closest
+task-aware heuristics, show that path awareness explains most empirical gain.
+CARE's narrower contribution is exact bounded joint-scenario separation and a
 low-traffic reliability operating point, while sensing,
 delay, topology, random-map and compute controls identify where the mechanism
 does and does not help. Reliable ARQ remains the higher-traffic reliability
