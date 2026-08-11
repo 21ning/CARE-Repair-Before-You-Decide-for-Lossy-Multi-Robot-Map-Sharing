@@ -22,6 +22,17 @@ delay, packet budgets, and encoded-byte accounting as CARE.
 The final method is the `certificate_repair` policy in code and is labeled
 `CARE` in generated tables; `deadline_aware_repair` is the CARE-Lite ablation.
 
+CARE also sits between two explicit information-sharing endpoints:
+
+| Strategy | Communication | Role |
+| --- | ---: | --- |
+| No Communication | 0 bytes | local sensing only |
+| CARE | selective query--patch | repair only decision-relevant uncertainty |
+| Continuous Full Sync (`K=1`) | full available data budget every step | indiscriminate replica sharing |
+
+The full-sync endpoint is still loss- and bandwidth-constrained; it does not
+receive an unfair perfect channel.
+
 ![CARE running in POGEMA](assets/pogema_demo.gif)
 
 The animation shows **Robot 1's evolving local map replica**, not the complete
@@ -100,6 +111,13 @@ and Single-Cell Sensitivity reaches 0.7325/0.7625 at about 52.2 KB. CARE reaches
 positive; its advantage over Single-Cell is not statistically detected. See
 [docs/TASK_AWARE_BASELINES.md](docs/TASK_AWARE_BASELINES.md) for the exact
 contract, confidence intervals and resulting claim boundary.
+
+In the 5×5 information-spectrum experiment, No Communication reaches 0.5000
+CSR at 0 bytes, CARE reaches 0.7362/0.7688 at 53.25 KB, and Continuous Full
+Sync reaches 0.7250/0.7550 at 891.80 KB with A*/D* Lite. At 7×7, full sync
+raises CSR to 0.9812 but sends about 793 KB more than CARE. Mean episode length
+(EL), SDs, CIs and the 25-step ceiling effect are reported in
+[docs/INFORMATION_SPECTRUM.md](docs/INFORMATION_SPECTRUM.md).
 
 The implementation separates mapping, communication, planning, and environment
 execution so that the protocol can be inspected or replaced independently.
@@ -238,6 +256,20 @@ python scripts/analyze_task_aware_baselines.py \
   --output-directory /tmp/care-task-aware-analysis
 python scripts/make_task_aware_baseline_artifacts.py \
   --analysis-directory /tmp/care-task-aware-analysis \
+  --table-directory paper/tables
+```
+
+Run the matched information-sharing spectrum:
+
+```bash
+python scripts/run_psr_suite.py \
+  --config configs/care_information_spectrum_fov_100map.yaml \
+  --output-directory /tmp/care-spectrum --workers 32
+python scripts/analyze_information_spectrum.py \
+  --input-directory /tmp/care-spectrum \
+  --output-directory /tmp/care-spectrum-analysis
+python scripts/make_information_spectrum_artifacts.py \
+  --analysis-directory /tmp/care-spectrum-analysis \
   --table-directory paper/tables
 ```
 

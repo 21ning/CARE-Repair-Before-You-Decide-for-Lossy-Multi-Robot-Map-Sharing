@@ -19,7 +19,7 @@ versioned anti-entropy protocol that computes a minimum decision certificate.
 CARE enumerates a bounded sparse occupancy-scenario family and solves an exact
 hitting-set problem whose queried cells distinguish all still-repairable action
 classes. A route-commitment certificate accounts for query--patch latency. We
-evaluate 57,200 episodes, each condition using 100 physically distinct maps
+evaluate 59,000 episodes, each condition using 100 physically distinct maps
 paired across methods. In the primary 5$\times$5-sensing condition at 30\%
 loss, CARE improves completion success from 0.6713 to 0.7362 with A* and from
 0.6900 to 0.7688 with D* Lite, adding only 5.63/5.47~KB over one-shot sharing.
@@ -27,9 +27,11 @@ Path-aware heuristics recover most of this gain. Relative to a matched
 path-only Top-K repair, CARE gains 0.0088/0.0075 success while sending about
 1.1~KB less; relative to a stronger single-cell decision test, the reliability
 difference is not statistically detected. Sensor, delay, topology, random-map,
-and compute controls delimit the claim: CARE is a bounded joint-scenario
-certificate and low-traffic reliability point, not a universal replacement for
-reliable delivery.
+and compute controls delimit the claim. A matched endpoint study places CARE
+between zero-byte local sensing and continuous full synchronization: at
+5$\times$5, full sync sends 891.80~KB versus CARE's 53.25~KB without a detected
+success advantage. CARE is a bounded joint-scenario certificate and selective
+reliability point, not a universal replacement for reliable delivery.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -62,7 +64,7 @@ Our contributions are: (i) a codec-priced optimization with an exact
 scenario-separation condition; (ii) a dual certificate combining action
 identifiability with a deadline derived from route commitment and measured
 query--patch latency; (iii) a bounded online solver with explicit complexity
-and guarantee limits; and (iv) a 57,200-episode evaluation with paired
+and guarantee limits; and (iv) a 59,000-episode evaluation with paired
 map-cluster inference, three published reconciliation baselines, two matched
 task-aware heuristics, controlled baselines and full-method ablations, two
 planners, three sensing ranges, loss/delay sweeps, density/topology/scale
@@ -154,6 +156,15 @@ enumerates joint scenarios nor solves a hitting set. Thus these baselines test
 whether gains require merely path information, independent counterfactuals, or
 CARE's joint action-class certificate.
 
+Finally, a 1,800-episode information-spectrum matrix compares No
+Communication, CARE and Continuous Full Sync at all three sensing ranges and
+both planners. No Communication suppresses every packet and is audited at zero
+attempted bytes. Continuous Full Sync replaces ordinary deltas every step
+($K=1$) with a rotating full-replica transfer. It uses the same lossy link,
+13-byte cell codec, sender data cap and attempted-byte accounting as CARE; it
+is not an idealized perfect-information channel. All summaries include mean
+episode length (EL), SD and CI, and paired comparisons include $\Delta$EL.
+
 We additionally record the peer's first observation of the critical obstacle,
 the seeker's first local observation, route commitment, the signed repair
 window, and candidate-cap saturation. Conditional timing means always include
@@ -189,21 +200,49 @@ exceeds Merkle by 0.0650/0.0788 and IBLT by 0.0550/0.0725, saving
 \caption{Primary task-aware ladder: 5$\times$5 sensing, 30\% loss, 100 maps.}
 \label{tab:primary}
 \centering
+\scriptsize
+\begin{tabular}{lrrrrrr}
+\toprule
+Method & \multicolumn{3}{c}{A*} & \multicolumn{3}{c}{D* Lite} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}
+& CSR & EL & KB & CSR & EL & KB \\
+\midrule
+One-shot & .6713 & 25.00 & 47.62 & .6900 & 25.00 & 47.78 \\
+Retry-All ARQ & .7588 & 25.00 & 154.45 & .7863 & 25.00 & 155.00 \\
+Path-Weighted ARQ & .7588 & 25.00 & 154.50 & .7863 & 25.00 & 155.09 \\
+PSR-UT & .7350 & 25.00 & 62.71 & .7638 & 25.00 & 62.74 \\
+CARE-Lite & .7400 & 25.00 & 57.00 & .7712 & 25.00 & 57.06 \\
+Path-Aware Top-K & .7275 & 25.00 & 54.37 & .7612 & 25.00 & 54.39 \\
+Single-Cell Sens. & .7325 & 25.00 & 52.11 & .7625 & 25.00 & 52.23 \\
+CARE & .7362 & 25.00 & 53.25 & .7688 & 25.00 & 53.25 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:spectrum} makes the two communication endpoints explicit. CARE
+gains $+0.2362$ ($[+0.2175,+0.2537]$) A* and $+0.2687$
+($[+0.2500,+0.2875]$) D* Lite success over zero-byte No Communication.
+Continuous Full Sync saturates the link at 891.80~KB, 16.7$\times$ CARE's
+traffic, yet its CARE-relative success difference is $-0.0112$
+($[-0.0262,+0.0037]$) and $-0.0138$ ($[-0.0300,+0.0025]$). At 7$\times$7
+it becomes the higher-reliability endpoint (0.9812 versus 0.9375/0.9413) but
+costs about 793~KB more. Mean EL is 25.00 for every 5$\times$5 method because
+the episode ends only when all robots finish; this horizon ceiling precludes a
+primary-condition speed claim. At 7$\times$7, full sync shortens A* EL from
+24.43 to 24.14 steps.
+
+\begin{table}[t]
+\caption{Information spectrum at 5$\times$5 and 30\% loss (100 maps).}
+\label{tab:spectrum}
+\centering
 \small
 \begin{tabular}{lrrrr}
 \toprule
-Method & \multicolumn{2}{c}{A*} & \multicolumn{2}{c}{D* Lite} \\
-\cmidrule(lr){2-3}\cmidrule(lr){4-5}
-& CSR & KB & CSR & KB \\
+Strategy & A* CSR & D* CSR & Mean EL & KB \\
 \midrule
-One-shot & .6713 & 47.62 & .6900 & 47.78 \\
-Retry-All ARQ & .7588 & 154.45 & .7863 & 155.00 \\
-Path-Weighted ARQ & .7588 & 154.50 & .7863 & 155.09 \\
-PSR-UT & .7350 & 62.71 & .7638 & 62.74 \\
-CARE-Lite & .7400 & 57.00 & .7712 & 57.06 \\
-Path-Aware Top-K & .7275 & 54.37 & .7612 & 54.39 \\
-Single-Cell Sens. & .7325 & 52.11 & .7625 & 52.23 \\
-CARE & .7362 & 53.25 & .7688 & 53.25 \\
+No Communication & .5000 & .5000 & 25.00 & 0.00 \\
+CARE & .7362 & .7688 & 25.00 & 53.25 \\
+Continuous Full Sync & .7250 & .7550 & 25.00 & 891.80 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -260,7 +299,8 @@ certificate and route commitment supplies its deadline. Matched A* and D* Lite
 results, including three published reconciliation algorithms and two closest
 task-aware heuristics, show that path awareness explains most empirical gain.
 CARE's narrower contribution is exact bounded joint-scenario separation and a
-low-traffic reliability operating point, while sensing,
+selective operating point between zero communication and bandwidth-saturating
+full synchronization, while sensing,
 delay, topology, random-map and compute controls identify where the mechanism
 does and does not help. Reliable ARQ remains the higher-traffic reliability
 endpoint rather than a target CARE claims to dominate.

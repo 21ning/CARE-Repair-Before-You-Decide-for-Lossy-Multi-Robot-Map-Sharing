@@ -6,6 +6,7 @@ derived tables used to audit the paper's numerical claims, including the final
 six-loss/eight-baseline 5×5 CARE matrix, matched 3×3/7×7 sensor extensions,
 three published reconciliation baselines across all sensing ranges,
 two communication-matched task-aware repair heuristics,
+the zero-byte to continuous-full-sync information spectrum with mean EL,
 A*/D* Lite comparison, deadline, density, topology, scale and paired ablations.
 
 The raw 100-map episode outputs are not bundled in the submission code

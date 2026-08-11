@@ -37,10 +37,14 @@ python scripts/run_psr_suite.py \
 python scripts/run_psr_suite.py \
   --config configs/care_task_aware_baselines_fov_100map.yaml \
   --output-directory /tmp/care-task-aware --workers 32
+
+python scripts/run_psr_suite.py \
+  --config configs/care_information_spectrum_fov_100map.yaml \
+  --output-directory /tmp/care-spectrum --workers 32
 ```
 
 Expected episode counts are respectively 9,600, 6,000, 3,200, 12,000,
-21,600 and 4,800.
+21,600, 4,800 and 1,800.
 
 ## Analyze and generate paper assets
 
@@ -82,6 +86,13 @@ python scripts/analyze_task_aware_baselines.py \
   --output-directory /tmp/care-task-aware-analysis
 python scripts/make_task_aware_baseline_artifacts.py \
   --analysis-directory /tmp/care-task-aware-analysis \
+  --table-directory paper/tables
+
+python scripts/analyze_information_spectrum.py \
+  --input-directory /tmp/care-spectrum \
+  --output-directory /tmp/care-spectrum-analysis
+python scripts/make_information_spectrum_artifacts.py \
+  --analysis-directory /tmp/care-spectrum-analysis \
   --table-directory paper/tables
 ```
 

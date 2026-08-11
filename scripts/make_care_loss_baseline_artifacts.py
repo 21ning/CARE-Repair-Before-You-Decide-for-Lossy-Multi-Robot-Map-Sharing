@@ -60,12 +60,19 @@ def make(analysis_directory: Path, table_directory: Path, figure_directory: Path
     for planner in PLANNERS:
         for policy in POLICIES:
             csr = lookup[(planner, .3, policy, "completion_success_rate")]
+            episode_length = lookup[(planner, .3, policy, "episode_length")]
             traffic = lookup[(planner, .3, policy, "attempted_bytes")]
             primary_rows.append({
                 "planner": PLANNER_LABELS[planner], "method": LABELS[policy],
                 "csr_mean": f'{float(csr["mean"]):.4f}',
                 "csr_std": f'{float(csr["std"]):.4f}',
                 "csr_ci95": f'[{float(csr["ci95_low"]):.4f}, {float(csr["ci95_high"]):.4f}]',
+                "el_mean": f'{float(episode_length["mean"]):.2f}',
+                "el_std": f'{float(episode_length["std"]):.2f}',
+                "el_ci95": (
+                    f'[{float(episode_length["ci95_low"]):.2f}, '
+                    f'{float(episode_length["ci95_high"]):.2f}]'
+                ),
                 "attempted_kb_mean": f'{float(traffic["mean"]) / 1000:.2f}',
                 "attempted_kb_std": f'{float(traffic["std"]) / 1000:.2f}',
                 "attempted_kb_ci95": (
@@ -78,12 +85,14 @@ def make(analysis_directory: Path, table_directory: Path, figure_directory: Path
         "# CARE baseline comparison at 30% packet loss", "",
         "Each condition uses 100 independent maps. Values are mean ± sample SD; ",
         "brackets give a 20,000-draw map-cluster bootstrap 95% CI.", "",
-        "| Planner | Method | CSR | Attempted traffic (KB) |", "| --- | --- | ---: | ---: |",
+        "| Planner | Method | CSR | Mean EL | Attempted traffic (KB) |",
+        "| --- | --- | ---: | ---: | ---: |",
     ]
     for row in primary_rows:
         markdown.append(
             f'| {row["planner"]} | {row["method"]} | '
             f'{row["csr_mean"]} ± {row["csr_std"]} {row["csr_ci95"]} | '
+            f'{row["el_mean"]} ± {row["el_std"]} {row["el_ci95"]} | '
             f'{row["attempted_kb_mean"]} ± {row["attempted_kb_std"]} '
             f'{row["attempted_kb_ci95"]} |'
         )
@@ -93,12 +102,18 @@ def make(analysis_directory: Path, table_directory: Path, figure_directory: Path
     for planner in PLANNERS:
         for comparator in POLICIES[:-1]:
             csr = paired_lookup[(planner, .3, comparator, "completion_success_rate")]
+            episode_length = paired_lookup[(planner, .3, comparator, "episode_length")]
             traffic = paired_lookup[(planner, .3, comparator, "attempted_bytes")]
             paired_rows.append({
                 "planner": PLANNER_LABELS[planner], "comparison": f'CARE - {LABELS[comparator]}',
                 "csr_difference": f'{float(csr["mean_difference"]):+.4f}',
                 "csr_ci95": f'[{float(csr["ci95_low"]):+.4f}, {float(csr["ci95_high"]):+.4f}]',
                 "csr_effect_dz": f'{float(csr["paired_effect_dz"]):+.3f}',
+                "el_difference": f'{float(episode_length["mean_difference"]):+.2f}',
+                "el_ci95": (
+                    f'[{float(episode_length["ci95_low"]):+.2f}, '
+                    f'{float(episode_length["ci95_high"]):+.2f}]'
+                ),
                 "traffic_kb_difference": f'{float(traffic["mean_difference"]) / 1000:+.2f}',
                 "traffic_kb_ci95": (
                     f'[{float(traffic["ci95_low"]) / 1000:+.2f}, '
@@ -109,14 +124,15 @@ def make(analysis_directory: Path, table_directory: Path, figure_directory: Path
     paired_markdown = [
         "# Paired CARE comparisons at 30% packet loss", "",
         "Differences are CARE minus the matched comparator on each of 100 maps.", "",
-        "| Planner | Comparison | CSR difference [95% CI] | Effect dz | Traffic difference KB [95% CI] |",
-        "| --- | --- | ---: | ---: | ---: |",
+        "| Planner | Comparison | CSR difference [95% CI] | Effect dz | EL difference [95% CI] | Traffic difference KB [95% CI] |",
+        "| --- | --- | ---: | ---: | ---: | ---: |",
     ]
     for row in paired_rows:
         paired_markdown.append(
             f'| {row["planner"]} | {row["comparison"]} | '
             f'{row["csr_difference"]} {row["csr_ci95"]} | '
-            f'{row["csr_effect_dz"]} | {row["traffic_kb_difference"]} '
+            f'{row["csr_effect_dz"]} | {row["el_difference"]} {row["el_ci95"]} | '
+            f'{row["traffic_kb_difference"]} '
             f'{row["traffic_kb_ci95"]} |'
         )
     (table_directory / "care_loss_baselines_paired.md").write_text(

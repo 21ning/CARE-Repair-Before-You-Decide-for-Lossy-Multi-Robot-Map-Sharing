@@ -2,7 +2,7 @@
 
 ## Frozen evidence
 
-All planned runs are complete: 57,200 episodes. Every policy-condition uses
+All planned runs are complete: 59,000 episodes. Every policy-condition uses
 100 physically distinct layouts, not merely 100 different seed labels. The
 same layout and deterministic packet-loss trace are shared by paired methods.
 Means and sample SDs use the 100 map-level observations; confidence intervals
@@ -17,6 +17,7 @@ methods within a layout/loss trace before resampling.
 | Ablation and extension | 12,000 | density, random negative controls, q/cap/cadence, topology, scale |
 | Published reconciliation/FOV | 21,600 | 3 sensing ranges × 6 losses × 6 methods × A*/D* Lite |
 | Task-aware repair ladder | 4,800 | 3 sensing ranges × 8 methods × A*/D* Lite |
+| Information-sharing spectrum | 1,800 | No Communication/CARE/Continuous Full Sync × 3 sensing ranges × A*/D* Lite |
 
 Independent reruns of the overlapping 5×5 conditions agree on every
 non-timing output field (`care_cross_study_reproducibility.json`).
@@ -72,6 +73,26 @@ explains most of the gain. CARE contributes a bounded joint-scenario guarantee
 and compresses broad path/deadline queries; Single-Cell is the stronger
 lightweight empirical alternative. Full evidence is in
 `TASK_AWARE_BASELINES.md` and `paper/tables/care_task_aware_*`.
+
+### Information-sharing spectrum and mean EL
+
+The endpoint study compares true zero-byte No Communication, CARE and
+Continuous Full Sync (`K=1`) under the same lossy link and byte cap. At 5×5,
+A* CSR/mean EL/traffic are respectively `0.5000/25.00/0.00 KB`,
+`0.7362/25.00/53.25 KB` and `0.7250/25.00/891.80 KB`. D* Lite gives
+`0.5000/25.00/0.00`, `0.7688/25.00/53.25` and
+`0.7550/25.00/891.80`.
+
+Continuous Full Sync minus CARE is -0.0112 `[-0.0262, 0.0037]` A* CSR and
+-0.0138 `[-0.0300, 0.0025]` D* Lite CSR, so no primary reliability advantage
+is detected despite about 838.55 KB more traffic. At 7×7, full sync gains
++0.0437 `[0.0275, 0.0612]` A* CSR and shortens mean EL by 0.29 steps, but
+costs about 793.33 KB more.
+
+Mean EL, sample SD and CI are now retained in every new task-aware and spectrum
+table. At 5×5 all policies hit the 25-step all-robots-complete horizon, so EL
+has a ceiling effect and cannot support a speed claim. Full evidence is in
+`INFORMATION_SPECTRUM.md` and `paper/tables/care_information_spectrum*`.
 
 ## Packet loss and delay
 

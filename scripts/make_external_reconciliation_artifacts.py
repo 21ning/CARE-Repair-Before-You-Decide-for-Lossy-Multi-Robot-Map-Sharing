@@ -48,6 +48,7 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
     for planner in ("astar", "dstar_lite"):
         for policy in ORDER:
             csr = lookup[(2, planner, .3, policy, "completion_success_rate")]
+            episode_length = lookup[(2, planner, .3, policy, "episode_length")]
             traffic = lookup[(2, planner, .3, policy, "attempted_bytes")]
             error = lookup[(2, planner, .3, policy, "mean_path_truth_error")]
             primary.append({
@@ -56,6 +57,9 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
                 "csr_mean": f'{float(csr["mean"]):.4f}',
                 "csr_std": f'{float(csr["std"]):.4f}',
                 "csr_ci95": f'[{float(csr["ci95_low"]):.4f}, {float(csr["ci95_high"]):.4f}]',
+                "el_mean": f'{float(episode_length["mean"]):.2f}',
+                "el_std": f'{float(episode_length["std"]):.2f}',
+                "el_ci95": f'[{float(episode_length["ci95_low"]):.2f}, {float(episode_length["ci95_high"]):.2f}]',
                 "attempted_kb_mean": f'{float(traffic["mean"]) / 1000:.2f}',
                 "attempted_kb_std": f'{float(traffic["std"]) / 1000:.2f}',
                 "path_truth_error_mean": f'{float(error["mean"]):.4f}',
@@ -64,13 +68,14 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
     lines = [
         "# Published reconciliation baselines at 30% packet loss", "",
         "100 independent matched maps; mean ± sample SD and 20,000-draw map-cluster 95% CI.", "",
-        "| Planner | Method | CSR mean ± SD [95% CI] | Attempted KB mean ± SD | Path-truth error |",
-        "| --- | --- | ---: | ---: | ---: |",
+        "| Planner | Method | CSR mean ± SD [95% CI] | EL mean ± SD [95% CI] | Attempted KB mean ± SD | Path-truth error |",
+        "| --- | --- | ---: | ---: | ---: | ---: |",
     ]
     for row in primary:
         lines.append(
             f'| {row["planner"]} | {row["method"]} | '
             f'{row["csr_mean"]} ± {row["csr_std"]} {row["csr_ci95"]} | '
+            f'{row["el_mean"]} ± {row["el_std"]} {row["el_ci95"]} | '
             f'{row["attempted_kb_mean"]} ± {row["attempted_kb_std"]} | '
             f'{row["path_truth_error_mean"]} |'
         )
@@ -97,12 +102,17 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
             traffic = paired_lookup[(
                 2, planner, .3, "certificate_repair", comparator, "attempted_bytes",
             )]
+            episode_length = paired_lookup[(
+                2, planner, .3, "certificate_repair", comparator, "episode_length",
+            )]
             paired_rows.append({
                 "planner": "A*" if planner == "astar" else "D* Lite",
                 "comparison": f'CARE - {LABELS[comparator]}',
                 "csr_difference": f'{float(csr["mean_difference"]):+.4f}',
                 "csr_ci95": f'[{float(csr["ci95_low"]):+.4f}, {float(csr["ci95_high"]):+.4f}]',
                 "csr_effect_dz": f'{float(csr["paired_effect_dz"]):+.3f}',
+                "el_difference": f'{float(episode_length["mean_difference"]):+.2f}',
+                "el_ci95": f'[{float(episode_length["ci95_low"]):+.2f}, {float(episode_length["ci95_high"]):+.2f}]',
                 "traffic_difference_kb": f'{float(traffic["mean_difference"]) / 1000:+.2f}',
                 "traffic_ci95_kb": (
                     f'[{float(traffic["ci95_low"]) / 1000:+.2f}, '
@@ -113,14 +123,15 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
     lines = [
         "# CARE paired against published reconciliation baselines at 30% loss", "",
         "Positive ΔCSR favors CARE; negative ΔKB means CARE sends less traffic.", "",
-        "| Planner | Comparison | ΔCSR [95% CI] | paired d_z | ΔKB [95% CI] |",
-        "| --- | --- | ---: | ---: | ---: |",
+        "| Planner | Comparison | ΔCSR [95% CI] | paired d_z | ΔEL [95% CI] | ΔKB [95% CI] |",
+        "| --- | --- | ---: | ---: | ---: | ---: |",
     ]
     for row in paired_rows:
         lines.append(
             f'| {row["planner"]} | {row["comparison"]} | '
             f'{row["csr_difference"]} {row["csr_ci95"]} | '
-            f'{row["csr_effect_dz"]} | {row["traffic_difference_kb"]} '
+            f'{row["csr_effect_dz"]} | {row["el_difference"]} {row["el_ci95"]} | '
+            f'{row["traffic_difference_kb"]} '
             f'{row["traffic_ci95_kb"]} |'
         )
     (table_directory / "care_external_baselines_paired.md").write_text(
@@ -143,6 +154,7 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
         for planner in ("astar", "dstar_lite"):
             for policy in ORDER:
                 csr = lookup[(radius, planner, .3, policy, "completion_success_rate")]
+                episode_length = lookup[(radius, planner, .3, policy, "episode_length")]
                 traffic = lookup[(radius, planner, .3, policy, "attempted_bytes")]
                 fov_rows.append({
                     "fov": f"{2 * radius + 1}x{2 * radius + 1}",
@@ -151,19 +163,22 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
                     "csr_mean": f'{float(csr["mean"]):.4f}',
                     "csr_std": f'{float(csr["std"]):.4f}',
                     "csr_ci95": f'[{float(csr["ci95_low"]):.4f}, {float(csr["ci95_high"]):.4f}]',
+                    "el_mean": f'{float(episode_length["mean"]):.2f}',
+                    "el_ci95": f'[{float(episode_length["ci95_low"]):.2f}, {float(episode_length["ci95_high"]):.2f}]',
                     "attempted_kb_mean": f'{float(traffic["mean"]) / 1000:.2f}',
                 })
     write_csv(table_directory / "care_external_baselines_fov.csv", fov_rows)
     lines = [
         "# Published reconciliation baselines across sensing ranges at 30% loss", "",
         "Each cell uses 100 independent matched maps.", "",
-        "| FOV | Planner | Method | CSR mean ± SD [95% CI] | Attempted KB |",
-        "| --- | --- | --- | ---: | ---: |",
+        "| FOV | Planner | Method | CSR mean ± SD [95% CI] | Mean EL [95% CI] | Attempted KB |",
+        "| --- | --- | --- | ---: | ---: | ---: |",
     ]
     for row in fov_rows:
         lines.append(
             f'| {row["fov"]} | {row["planner"]} | {row["method"]} | '
             f'{row["csr_mean"]} ± {row["csr_std"]} {row["csr_ci95"]} | '
+            f'{row["el_mean"]} {row["el_ci95"]} | '
             f'{row["attempted_kb_mean"]} |'
         )
     (table_directory / "care_external_baselines_fov.md").write_text(
@@ -184,6 +199,10 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
                     radius, planner, .3, "certificate_repair", comparator,
                     "attempted_bytes",
                 )]
+                episode_length = paired_lookup[(
+                    radius, planner, .3, "certificate_repair", comparator,
+                    "episode_length",
+                )]
                 fov_paired_rows.append({
                     "fov": f"{2 * radius + 1}x{2 * radius + 1}",
                     "planner": "A*" if planner == "astar" else "D* Lite",
@@ -194,6 +213,8 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
                         f'{float(csr["ci95_high"]):+.4f}]'
                     ),
                     "csr_effect_dz": f'{float(csr["paired_effect_dz"]):+.3f}',
+                    "el_difference": f'{float(episode_length["mean_difference"]):+.2f}',
+                    "el_ci95": f'[{float(episode_length["ci95_low"]):+.2f}, {float(episode_length["ci95_high"]):+.2f}]',
                     "traffic_difference_kb": (
                         f'{float(traffic["mean_difference"]) / 1000:+.2f}'
                     ),
@@ -208,14 +229,15 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
         "# CARE paired against published reconciliation baselines across sensing ranges",
         "", "All comparisons use 30% loss and 100 matched maps. Positive ΔCSR "
         "favors CARE; negative ΔKB means CARE sends less traffic.", "",
-        "| FOV | Planner | Comparison | ΔCSR [95% CI] | paired d_z | ΔKB [95% CI] |",
-        "| --- | --- | --- | ---: | ---: | ---: |",
+        "| FOV | Planner | Comparison | ΔCSR [95% CI] | paired d_z | ΔEL [95% CI] | ΔKB [95% CI] |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: |",
     ]
     for row in fov_paired_rows:
         markdown.append(
             f'| {row["fov"]} | {row["planner"]} | {row["comparison"]} | '
             f'{row["csr_difference"]} {row["csr_ci95"]} | '
-            f'{row["csr_effect_dz"]} | {row["traffic_difference_kb"]} '
+            f'{row["csr_effect_dz"]} | {row["el_difference"]} {row["el_ci95"]} | '
+            f'{row["traffic_difference_kb"]} '
             f'{row["traffic_ci95_kb"]} |'
         )
     (table_directory / f"{stem}.md").write_text("\n".join(markdown) + "\n")
@@ -234,6 +256,10 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
                     radius, planner, .3, external_policy, "one_shot_delta",
                     "attempted_bytes",
                 )]
+                episode_length = paired_lookup[(
+                    radius, planner, .3, external_policy, "one_shot_delta",
+                    "episode_length",
+                )]
                 external_rows.append({
                     "fov": f"{2 * radius + 1}x{2 * radius + 1}",
                     "planner": "A*" if planner == "astar" else "D* Lite",
@@ -244,6 +270,8 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
                         f'{float(csr["ci95_high"]):+.4f}]'
                     ),
                     "csr_effect_dz": f'{float(csr["paired_effect_dz"]):+.3f}',
+                    "el_difference": f'{float(episode_length["mean_difference"]):+.2f}',
+                    "el_ci95": f'[{float(episode_length["ci95_low"]):+.2f}, {float(episode_length["ci95_high"]):+.2f}]',
                     "traffic_difference_kb": (
                         f'{float(traffic["mean_difference"]) / 1000:+.2f}'
                     ),
@@ -258,14 +286,15 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
         "# Published reconciliation baselines paired against One-shot", "",
         "All comparisons use 30% loss and 100 matched maps. Positive ΔCSR favors "
         "the external method; positive ΔKB means extra traffic.", "",
-        "| FOV | Planner | Comparison | ΔCSR [95% CI] | paired d_z | ΔKB [95% CI] |",
-        "| --- | --- | --- | ---: | ---: | ---: |",
+        "| FOV | Planner | Comparison | ΔCSR [95% CI] | paired d_z | ΔEL [95% CI] | ΔKB [95% CI] |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: |",
     ]
     for row in external_rows:
         markdown.append(
             f'| {row["fov"]} | {row["planner"]} | {row["comparison"]} | '
             f'{row["csr_difference"]} {row["csr_ci95"]} | '
-            f'{row["csr_effect_dz"]} | {row["traffic_difference_kb"]} '
+            f'{row["csr_effect_dz"]} | {row["el_difference"]} {row["el_ci95"]} | '
+            f'{row["traffic_difference_kb"]} '
             f'{row["traffic_ci95_kb"]} |'
         )
     (table_directory / f"{stem}.md").write_text("\n".join(markdown) + "\n")

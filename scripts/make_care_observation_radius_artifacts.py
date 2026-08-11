@@ -56,11 +56,16 @@ def make(analysis_directory: Path, table_directory: Path, figure_directory: Path
     for planner in ("astar", "dstar_lite"):
         for policy in POLICIES:
             csr = lookup[("5x5", planner, policy, "completion_success_rate")]
+            episode_length = lookup[("5x5", planner, policy, "episode_length")]
             traffic = lookup[("5x5", planner, policy, "attempted_bytes")]
             primary.append({
                 "planner": PLANNER_LABELS[planner], "method": LABELS[policy],
                 "csr_mean": float(csr["mean"]), "csr_std": float(csr["std"]),
                 "csr_ci95_low": float(csr["ci95_low"]), "csr_ci95_high": float(csr["ci95_high"]),
+                "el_mean": float(episode_length["mean"]),
+                "el_std": float(episode_length["std"]),
+                "el_ci95_low": float(episode_length["ci95_low"]),
+                "el_ci95_high": float(episode_length["ci95_high"]),
                 "attempted_kb_mean": float(traffic["mean"]) / 1000,
                 "attempted_kb_std": float(traffic["std"]) / 1000,
                 "attempted_kb_ci95_low": float(traffic["ci95_low"]) / 1000,
@@ -70,13 +75,15 @@ def make(analysis_directory: Path, table_directory: Path, figure_directory: Path
     lines = [
         "# CARE primary 5x5 observation results", "",
         "100 physically distinct matched layouts; mean ± sample SD and map-cluster bootstrap 95% CI.", "",
-        "| Planner | Method | CSR mean ± SD [95% CI] | Attempted KB mean ± SD [95% CI] |",
-        "| --- | --- | ---: | ---: |",
+        "| Planner | Method | CSR mean ± SD [95% CI] | EL mean ± SD [95% CI] | Attempted KB mean ± SD [95% CI] |",
+        "| --- | --- | ---: | ---: | ---: |",
     ]
     for row in primary:
         lines.append(
             f"| {row['planner']} | {row['method']} | {row['csr_mean']:.4f} ± {row['csr_std']:.4f} "
             f"[{row['csr_ci95_low']:.4f}, {row['csr_ci95_high']:.4f}] | "
+            f"{row['el_mean']:.2f} ± {row['el_std']:.2f} "
+            f"[{row['el_ci95_low']:.2f}, {row['el_ci95_high']:.2f}] | "
             f"{row['attempted_kb_mean']:.2f} ± {row['attempted_kb_std']:.2f} "
             f"[{row['attempted_kb_ci95_low']:.2f}, {row['attempted_kb_ci95_high']:.2f}] |"
         )
@@ -87,18 +94,23 @@ def make(analysis_directory: Path, table_directory: Path, figure_directory: Path
         for fov in ("3x3", "5x5", "7x7"):
             for policy in PLOT_POLICIES:
                 csr = lookup[(fov, planner, policy, "completion_success_rate")]
+                episode_length = lookup[(fov, planner, policy, "episode_length")]
                 traffic = lookup[(fov, planner, policy, "attempted_bytes")]
                 range_rows.append({
                     "planner": PLANNER_LABELS[planner], "fov": fov, "method": LABELS[policy],
                     "csr_mean": float(csr["mean"]), "csr_std": float(csr["std"]),
                     "csr_ci95_low": float(csr["ci95_low"]), "csr_ci95_high": float(csr["ci95_high"]),
+                    "el_mean": float(episode_length["mean"]),
+                    "el_std": float(episode_length["std"]),
+                    "el_ci95_low": float(episode_length["ci95_low"]),
+                    "el_ci95_high": float(episode_length["ci95_high"]),
                     "attempted_kb_mean": float(traffic["mean"]) / 1000,
                     "attempted_kb_std": float(traffic["std"]) / 1000,
                 })
     write_csv(table_directory / "care_fov_extension.csv", range_rows)
 
     paired_rows = [row for row in paired if row["fov"] == "5x5" and row["metric"] in {
-        "completion_success_rate", "attempted_bytes",
+        "completion_success_rate", "episode_length", "attempted_bytes",
     }]
     write_csv(table_directory / "care_fov_primary_paired.csv", paired_rows)
 

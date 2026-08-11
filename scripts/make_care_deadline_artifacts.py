@@ -45,12 +45,16 @@ def main() -> None:
     for planner in ("astar", "dstar_lite"):
         for policy in LABELS:
             csr = lookup[(planner, 0, policy, "completion_success_rate")]
+            episode_length = lookup[(planner, 0, policy, "episode_length")]
             traffic = lookup[(planner, 0, policy, "attempted_bytes")]
             cpu = lookup[(planner, 0, policy, "planning_cpu_ms")]
             output.append({
                 "planner": planner, "method": LABELS[policy],
                 "csr_mean": csr["mean"], "csr_std": csr["std"],
                 "csr_ci95_low": csr["ci95_low"], "csr_ci95_high": csr["ci95_high"],
+                "el_mean": episode_length["mean"], "el_std": episode_length["std"],
+                "el_ci95_low": episode_length["ci95_low"],
+                "el_ci95_high": episode_length["ci95_high"],
                 "attempted_kb_mean": float(traffic["mean"]) / 1_000,
                 "attempted_kb_std": float(traffic["std"]) / 1_000,
                 "planning_cpu_ms_mean": cpu["mean"],
@@ -63,14 +67,16 @@ def main() -> None:
     lines = [
         "# CARE cross-planner primary result", "",
         "100 independent maps; 30% loss; zero link delay. CIs bootstrap independent maps.", "",
-        "| Planner | Method | CSR mean ± SD [95% CI] | Attempted KB mean ± SD | Planning CPU ms |",
-        "|---|---|---:|---:|---:|",
+        "| Planner | Method | CSR mean ± SD [95% CI] | EL mean ± SD [95% CI] | Attempted KB mean ± SD | Planning CPU ms |",
+        "|---|---|---:|---:|---:|---:|",
     ]
     for row in output:
         lines.append(
             f"| {row['planner']} | {row['method']} | "
             f"{float(row['csr_mean']):.4f} ± {float(row['csr_std']):.4f} "
             f"[{float(row['csr_ci95_low']):.4f}, {float(row['csr_ci95_high']):.4f}] | "
+            f"{float(row['el_mean']):.2f} ± {float(row['el_std']):.2f} "
+            f"[{float(row['el_ci95_low']):.2f}, {float(row['el_ci95_high']):.2f}] | "
             f"{float(row['attempted_kb_mean']):.2f} ± {float(row['attempted_kb_std']):.2f} | "
             f"{float(row['planning_cpu_ms_mean']):.2f} |"
         )

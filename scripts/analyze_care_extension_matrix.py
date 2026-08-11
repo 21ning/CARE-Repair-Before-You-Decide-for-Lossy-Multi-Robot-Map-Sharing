@@ -18,8 +18,9 @@ METRICS = (
     "episode_cpu_ms",
 )
 ABLATION_METRICS = (
-    "completion_success_rate", "attempted_bytes", "mean_path_truth_error",
-    "certificate_candidate_cap_hit_rate", "episode_cpu_ms",
+    "completion_success_rate", "episode_length", "attempted_bytes",
+    "mean_path_truth_error", "certificate_candidate_cap_hit_rate",
+    "episode_cpu_ms",
 )
 
 

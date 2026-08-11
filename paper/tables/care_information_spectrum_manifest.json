@@ -1,0 +1,26 @@
+{
+  "complete": true,
+  "episodes": 1800,
+  "workers": 32,
+  "trace_rows": 44711,
+  "independent_maps_per_condition": 100,
+  "unique_physical_layouts": 100,
+  "fovs": [
+    "3x3",
+    "5x5",
+    "7x7"
+  ],
+  "planners": [
+    "astar",
+    "dstar_lite"
+  ],
+  "policies": [
+    "no_communication",
+    "certificate_repair",
+    "periodic_full_sync"
+  ],
+  "loss_probability": 0.3,
+  "delay_steps": 0,
+  "always_communicate_contract": "continuous full-replica synchronization every step (K=1), under the same lossy link, delay, data cap, cell codec and byte accounting",
+  "confidence_interval": "20000-draw map-cluster bootstrap; paired differences preserve map and deterministic loss trace"
+}

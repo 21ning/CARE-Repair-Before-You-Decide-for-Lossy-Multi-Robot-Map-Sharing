@@ -45,8 +45,10 @@ instance/loss trace。差别只在“何时修复”与“修复哪里”。
 | 策略 | 何时修复 | 修复范围 |
 | --- | --- | --- |
 | One-shot | 从不 | 无；普通 delta 只尝试一次 |
+| No Communication | 从不发送 | 无；本地感知端点，attempted traffic 必须严格为 0 |
 | Retry-All / Path-Weighted | 每次需要重传时 | 缺失 delta |
 | Periodic Full (K=4) | 每四步 | 已知全副本的公平轮转 chunk |
+| Continuous Full Sync (K=1) | 每一步 | 在同一有损链路和 data cap 下轮转全部已知副本 |
 | Mismatch Full | replica digest 不一致时 | 全副本 chunk |
 | PSR-UT | 本地乐观/悲观下一动作不同且在 corridor 内 | 接收端当前路径 corridor |
 | CARE-Lite | 两条路径存在歧义且 query--patch 可在首次进入未知 cell 前返回 | 分叉到重合之间的一跳 action-graph 未知 influence set |
@@ -90,6 +92,8 @@ version、长度、保留位、字段边界与 Delta CRC，再重建 update 并�
 | `make_external_reconciliation_artifacts.py` | external-baseline analysis | 投稿主表、配对表和协议诊断表 |
 | `analyze_task_aware_baselines.py` | 4,800-episode 三视野 task-aware ladder | 物理地图审计、mean/SD/CI、全配对比较与机制计数 |
 | `make_task_aware_baseline_artifacts.py` | task-aware analysis | 新主表、FOV 表、closest-baseline 配对表与 compute/query 诊断 |
+| `analyze_information_spectrum.py` | 1,800-episode 无通信/CARE/持续全同步矩阵 | 0-byte 审计、物理地图审计及 CSR/EL/traffic 配对 CI |
+| `make_information_spectrum_artifacts.py` | information-spectrum analysis | 三视野频谱表、paired CSR/EL/traffic 表与 manifest |
 
 所有 runner 拒绝覆盖非空输出目录。这是为了防止新运行静默混入已冻结的
 100-map 证据。完整命令见 `docs/REPRODUCIBILITY.md`。

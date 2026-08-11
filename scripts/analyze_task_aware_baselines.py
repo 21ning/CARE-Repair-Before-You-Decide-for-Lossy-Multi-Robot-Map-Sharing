@@ -31,8 +31,9 @@ METRICS = (
     "episode_cpu_ms",
 )
 PAIRED_METRICS = (
-    "completion_success_rate", "attempted_bytes", "attempted_control_bytes",
-    "attempted_repair_bytes", "mean_path_truth_error", "episode_cpu_ms",
+    "completion_success_rate", "episode_length", "attempted_bytes",
+    "attempted_control_bytes", "attempted_repair_bytes", "mean_path_truth_error",
+    "episode_cpu_ms",
 )
 COMPARISONS = (
     tuple(("certificate_repair", policy) for policy in POLICIES[:-1])
