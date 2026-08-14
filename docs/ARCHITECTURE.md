@@ -1,110 +1,121 @@
 # CARE 代码架构与协作关系
 
-本仓库只保留论文中使用的 CARE 显式地图副本实验链路。它不包含
-CMVR/Oracle、EPOM 训练、学习型通信策略或外部 MARL 方法的复现。
+仓库只保留显式占据栅格副本通信的实验链路，不包含 CMVR/Oracle、EPOM
+训练或学习型动作策略。A* 与增量 D* Lite 控制运动；CARE 只决定何时、向谁
+查询哪些版本化 cell。
 
 ## 端到端数据流
 
 ```mermaid
 flowchart LR
-  C[冻结 YAML 配置] --> R[scripts/run_psr_suite.py]
-  R --> I[独立地图与匹配丢包轨迹]
-  I --> E[cmvr.env.PSRClosedLoopRunner]
-  E --> M[本地 BeliefMap + 稀疏版本化 update]
-  E --> P[A* / 增量 D* Lite 路径规划]
-  E --> N[UnreliableNetwork + 精确字节预算]
-  E --> O[results.csv / traces.csv / instances]
-  O --> A[分析脚本：均值、标准差、配对 bootstrap CI]
-  A --> T[paper/tables 与 paper/figures]
-  T --> X[paper/care_icassp_draft.tex]
+  C["冻结 YAML 配置"] --> G["实例生成/加载"]
+  G --> M["固定 multifork clutter 或 immutable natural bitmap"]
+  M --> R["PSRClosedLoopRunner"]
+  R --> B["每个机器人自己的 BeliefMap"]
+  R --> P["A* / D* Lite"]
+  R --> N["UnreliableNetwork + binary codec"]
+  R --> O["results.csv / traces.csv / instances / manifest"]
+  O --> A["完整性审计 + map-cluster bootstrap"]
+  A --> T["tracked paper tables / figures"]
 ```
 
-每张地图有一个 `layout_seed` 和一个匹配的 `network_seed`。同一 map
-下的所有策略共享地图、起终点和逐包丢失抽样键；因此策略差值可按 map
-配对，而不是把独立的 episode 均值误当成配对证据。
+同一条件的所有策略共享序列化地图、起终点与确定性逐包丢包 trace，所以差值
+按 map 配对。runner 会先保存所有实例，再启动策略 episode；natural selector
+因而在任何策略、丢包结果或成功标签产生前冻结。
 
-## 核心包
+## 核心模块
 
-| 路径 | 责任 | 与其他模块的协作 |
+| 路径 | 责任 | 协作边界 |
 | --- | --- | --- |
-| `cmvr/mapping/` | `BeliefMap`、cell stamp、局部观测编码、增量更新 | 环境将观测写入本地副本；网络交付的版本化 update 也在这里合并。 |
-| `cmvr/planning/` | 统一 Planner 接口、确定性 A*、增量 D* Lite | runner 为每个 receiver 分别维护乐观/悲观规划器；CARE 只消费路径，不依赖具体搜索实现。 |
-| `cmvr/communication/unreliable.py` | 有向、固定 seed 的丢包/延迟信道与 event log | 所有 delta、digest、ACK 和 repair 都经过同一对象；输出按 data/control/repair 分项计费。 |
-| `cmvr/communication/replica_protocol.py` | policy、digest、scenario/deadline certificate 和 patch payload | 枚举有界稀疏场景并精确求解最小 hitting set；同时计算 route deadline；不访问真值地图或 peer 内存。 |
-| `cmvr/communication/external_reconciliation.py` | Scuttlebutt 版本进度、Merkle 树、IBLT subtract-and-peel | 只读取显式 `BeliefMap`/版本 update；不访问 planner、真值地图或其他机器人的内存。 |
-| `cmvr/communication/wire.py` | 固定宽度二进制 codec、CRC、字段边界和精确长度 | runner 在发送前编码、到达后解码；network 只接受 `bytes` 且强制 `len(payload) == byte_size`。 |
-| `cmvr/env/instance.py`、`structured_instances.py` | 随机与决策关键拓扑实例 | 为所有配对策略生成同一个可指纹化实例；`layout_fingerprint` 只编码物理布局，不把 seed 标签伪装成地图差异。 |
-| `cmvr/env/psr_runner.py` | 唯一的 closed-loop 执行器 | 编排观测、A*、通信、交付、修复与 POGEMA 动作，并生成 episode 级与 step 级指标。 |
-| `cmvr/utils/` | 配置和随机种子 | 保证跨进程、跨重跑的一致性。 |
+| `cmvr/mapping/` | `BeliefMap`、cell stamp、局部观测和稀疏 update | 本地观测与收到的 patch 都通过同一版本优先合并规则。 |
+| `cmvr/planning/` | 统一 planner contract、A*、增量 D* Lite | CARE 只消费 receiver 本地副本/路径；不读取真值。 |
+| `cmvr/communication/unreliable.py` | 确定性有向丢包、延迟、事件日志和预算 | 每个 delta/query/patch/digest 都以实际 `bytes` 通过该对象。 |
+| `cmvr/communication/wire.py` | 固定宽度 codec、CRC、长度和字段校验 | attempted traffic 使用编码后长度，丢失包仍计费。 |
+| `cmvr/communication/replica_protocol.py` | CARE、CARE-Lite、task-aware 与 closest-work policy | 构造候选/反事实/证书；只访问 receiver 显式局部状态。 |
+| `cmvr/communication/external_reconciliation.py` | Scuttlebutt/Merkle/IBLT primitives | 是占据 cell contract 下的 inspired adaptations，不是完整系统复现。 |
+| `cmvr/env/structured_instances.py` | 受控 multifork、topology 与 tiled stress 实例 | background clutter 可独立，受保护的决策结构保持固定。 |
+| `cmvr/env/natural_critical.py` | 自然 action-conflict 条件生成器 | 先采 immutable Bernoulli bitmap，再仅按冻结几何谓词选择；记录前后 SHA。 |
+| `cmvr/env/psr_runner.py` | 唯一 closed-loop runner | 编排感知、发送、交付、规划、POGEMA 动作和 role-aware metrics。 |
+| `cmvr/utils/` | 配置、种子和确定性工具 | 保证串行/并行与重跑一致。 |
 
-## 方法在同一 runner 中的差别
+## 方法在同一 runner 中的区别
 
-所有策略在每个 planner 条件内共享地图表示、每 sender 每步字节上限、链路丢失/延迟和
-instance/loss trace。差别只在“何时修复”与“修复哪里”。
-
-| 策略 | 何时修复 | 修复范围 |
+| 策略 | 触发 | 修复范围 |
 | --- | --- | --- |
-| One-shot | 从不 | 无；普通 delta 只尝试一次 |
-| No Communication | 从不发送 | 无；本地感知端点，attempted traffic 必须严格为 0 |
-| Retry-All / Path-Weighted | 每次需要重传时 | 缺失 delta |
-| Periodic Full (K=4) | 每四步 | 已知全副本的公平轮转 chunk |
-| Continuous Full Sync (K=1) | 每一步 | 在同一有损链路和 data cap 下轮转全部已知副本 |
-| Mismatch Full | replica digest 不一致时 | 全副本 chunk |
-| PSR-UT | 本地乐观/悲观下一动作不同且在 corridor 内 | 接收端当前路径 corridor |
-| CARE-Lite | 两条路径存在歧义且 query--patch 可在首次进入未知 cell 前返回 | 分叉到重合之间的一跳 action-graph 未知 influence set |
-| CARE | 存在仍可及时修复的动作冲突场景对 | 精确最小 scenario hitting set；正延迟时并入 route-commitment certificate |
-| Path-Aware Top-K | 路径附近存在 UNKNOWN 候选 | 按最早路径影响与图距离排序，查询共同 8-cell cap；不重规划 |
-| Single-Cell Sensitivity | 单独阻塞一个候选会改变可及时修复的路径动作 | action-change 优先、再按 divergence 排序；不构造联合场景 |
-| Scuttlebutt-Depth | 周期性交换 per-origin 最大版本 | backlog 最深的 origin 优先，同源 update 按旧到新发送 |
-| Dynamo-style Merkle AE | 会话内重试 16-ary 根/分支 hash，逐层恢复未匹配分支 | 深度优先定位不同 leaf，再发送该 cell；match ACK 使丢包后可继续 |
-| Partitioned IBLT | 对同一 peer 连续轮转 16 个空间分片并交换固定大小 sketch | subtract-and-peel 恢复该分片集合差，再发送 local-only records |
+| No Communication | 从不发送 | 无，严格 0 attempted bytes |
+| One-shot | 无修复 | 每个新 delta 只发送一次 |
+| Retry-All / Path-Weighted ARQ | update 尚未确认 | 缺失 delta；Path-Weighted 只改变优先级 |
+| Periodic / Continuous Full | 每 K=4 / K=1 步 | 在同一 data cap 下轮转已知全副本 |
+| Mismatch Full | replica digest 不一致 | 已知全副本 chunk |
+| PSR-UT | 固定 corridor 中存在 path uncertainty | corridor cell |
+| CARE-Lite | 乐观/悲观路径产生及时 action conflict | 手工 influence set |
+| Path-Aware Top-K | 路径附近有 UNKNOWN | 不重规划的 path-distance top K |
+| Single-Cell | 单 cell blocked 反事实改变动作 | 独立 cell 排序，不构造联合 scenario |
+| OCBC-FS（adapt.） | sampled local worlds 有正 safe-progress gain | 正 gain exact-cell arms |
+| PGSC（adapt.） | path-weighted proposal 存在 | greedy spatial-coverage exact cells |
+| Bernoulli R-D（adapt.） | 局部 Bernoulli distortion 可降低 | 最大 `path weight × q(1-q)` exact cells |
+| VoI/byte（adapt.） | 单 cell progress gain/编码 byte 为正 | 独立 counterfactual top K |
+| CARE（final） | 有 deadline-feasible action-conflicting scenario pair | 仅 uniform-byte exact minimum hitting set；不附加 route witness |
+| CARE-RouteGate（ablation only） | exact certificate 加辅助 route witness | first-UNKNOWN route-slack proxy 可 hard-suppress witness |
+| CARE-NoCommitGate（ablation only） | exact certificate 加辅助 route witness | 始终保留 raw route witness，不做上述 hard gate |
 
-Periodic Full 在非同步步发送普通 one-shot delta；同步步用同一 data cap
-优先发送完整已知副本的一个 chunk。chunk 同时轮转 cell 和 receiver，避免
-小预算下总是只发送给低编号机器人或只发送首批 cell。
+Final CARE 的唯一 deadline 规则直接过滤来不及修复的 scenario conflict。
+两种 auxiliary route-witness policy 都不是 final algorithm。严格 ablation
+表明 hard-gated witness 在 delay=2 显著降低 seeker success；完整结果见
+`docs/COMMITMENT_GATE_ABLATION.md`。
 
-## 编码、解码与计费
+## 实例和指标契约
 
-应用层实际发送固定宽度字节串，而不是直接在 network 中传递 Python
-对象。Cell Delta 为 13 B，Digest Query 为 `16+6N` B，Patch 为
-`4+13M` B，ACK 为 8 B，Replica Digest 为 16 B。发送预算使用编码后的
-`len(payload)`，丢失包同样计入 attempted traffic。接收端先验证 wire
-version、长度、保留位、字段边界与 Delta CRC，再重建 update 并按
-`(version, observed_at, source_id, state)` 合并。完整字段与位布局见
-[`docs/WIRE_FORMAT.md`](WIRE_FORMAT.md)。
+受控八机器人 multifork 由四个 observer 和四个 decision-critical seeker
+组成。observer 均在一步后完成，因此旧 overall CSR 有 0.5 结构性下限。
+新 `PSRResult` 和 CSV 明确保存：
 
-## 脚本与结果契约
+- 直接序列化的 `observer_ids`、`seeker_ids`、`critical_pairs`、
+  `completion_steps`、`completed_mask`；
+- `observer_success_rate`、`seeker_success_rate`、
+  `critical_pair_success_rate`、`all_seekers_success`；
+- 每个 agent 的 completion step，以及 uncensored/censored seeker completion；
+- certificate、commitment gate、closest-work planning/sample diagnostics；
+- attempted/delivered bytes、path/replica error 与 CPU timing。
 
-| 脚本 | 输入 | 输出 |
+论文主 endpoint 是 seeker CSR；overall CSR 只做 backward-compatible
+diagnostic。旧受控结果若用 `(2×overall)-1` 精确反推 seeker 值，必须标注
+为 derived，不能伪装成旧 CSV 的直接字段。
+
+## 编码、解码和计费
+
+Cell Delta 13 B，Digest Query `16+6N` B，Patch `4+13M` B，ACK 8 B，
+Replica Digest 16 B。接收端校验 wire version、长度、reserved bits、边界和
+Delta CRC，再依据 `(version, observed_at, source_id, state)` 合并。network
+不传 Python 对象；尝试发送但丢失的 payload 仍计入 attempted traffic。
+详细字段见 [`WIRE_FORMAT.md`](WIRE_FORMAT.md)。
+
+## 执行与产物
+
+| 脚本 | 输入/作用 | 主要输出 |
 | --- | --- | --- |
-| `run_psr_suite.py` | 一个 YAML 或等价 config | `instances/`、`results.csv`、`traces.csv`、`summary.json` |
-| `run_care_extension_matrix.py` | 5×5 下的 density、topology、scale、q/cap/cadence 设计 | 12,000-episode manifest 与各 study 输出 |
-| `analyze_care_observation_radius.py` | 3×3/5×5/7×7 的 6,000-episode 匹配矩阵 | FOV 汇总、配对差异、交互效应、因果时间和 cap 命中率 |
-| `analyze_care_extension_matrix.py` | CARE extension manifest 与 5×5 主矩阵 | 均值/SD/CI、扩展配对比较、full-method ablation |
-| `audit_care_cross_study_reproducibility.py` | 主/FOV/delay/density 独立重跑 | 除 CPU timing 外逐字段完全一致性审计 |
-| `make_care_deadline_artifacts.py` | CARE analysis | 跨规划器主表和 delay figure |
-| `analyze_care_certificate.py` | 双证书 3,200-episode gate | 配对 non-inferiority、traffic 和 CPU promotion gate |
-| `analyze_care_loss_baselines.py` | 9,600-episode loss/baseline matrix | map-cluster CI、paired effect size 和 Pareto frontier |
-| `make_care_loss_baseline_artifacts.py` | final audited analysis | 最终 baseline 表和 loss/traffic figure |
-| `make_care_observation_radius_artifacts.py` | FOV analysis | 5×5 主表、3×3/7×7 扩展表与 FOV 图 |
-| `make_care_extension_artifacts.py` | extension analysis | paired ablation、density/topology/scale/negative-control 表图 |
-| `analyze_external_reconciliation.py` | 21,600-episode 三视野 published-baseline matrix | 完整性审计、均值/SD/CI、CARE 与 external 的配对效应、IBLT 解码率 |
-| `make_external_reconciliation_artifacts.py` | external-baseline analysis | 投稿主表、配对表和协议诊断表 |
-| `analyze_task_aware_baselines.py` | 4,800-episode 三视野 task-aware ladder | 物理地图审计、mean/SD/CI、全配对比较与机制计数 |
-| `make_task_aware_baseline_artifacts.py` | task-aware analysis | 新主表、FOV 表、closest-baseline 配对表与 compute/query 诊断 |
-| `analyze_information_spectrum.py` | 1,800-episode 无通信/CARE/持续全同步矩阵 | 0-byte 审计、物理地图审计及 CSR/EL/traffic 配对 CI |
-| `make_information_spectrum_artifacts.py` | information-spectrum analysis | 三视野频谱表、paired CSR/EL/traffic 表与 manifest |
+| `run_psr_suite.py` | 一个 frozen YAML；先生成并保存实例，再并行策略 episode | `instances/`、`results.csv`、`traces.csv`、`summary.json`，natural 时另有 accepted manifest |
+| `run_care_extension_matrix.py` | 旧 density/topology/tiled scale/q-cap-cadence stress | study manifest 与 raw outputs |
+| `run_care_natural_scale.py` | 4/8/16/32 非 tiled natural matrices | 每个 scale 独立目录与 scale manifest |
+| `analyze_care_loss_baselines.py` | 主矩阵 role-aware mean/SD/CI 和 paired effects | audit CSV/JSON |
+| `analyze_care_closest_work.py` | closest-work 三 FOV matrix | role-aware summary、paired effects、compute counts |
+| `analyze_care_commitment_gate.py` | same-certificate hard-gate ablation | negative control、non-inferiority 和 traffic audit |
+| `analyze_care_natural_validity.py` | natural primary + non-tiled scale | immutable-layout audit、role-aware summaries |
+| `make_*_artifacts.py` | audited analysis | `paper/tables/` 与 `paper/figures/` 的派生投稿产物 |
 
-所有 runner 拒绝覆盖非空输出目录。这是为了防止新运行静默混入已冻结的
-100-map 证据。完整命令见 `docs/REPRODUCIBILITY.md`。
+`outputs/` 的 raw CSV、trace 和实例由 `.gitignore` 排除。GitHub 保存代码、
+configs、分析脚本、五份完整 accepted-layout manifest 与派生表/图。natural
+analyzer 会重算每个 serialized NPZ 的 SHA、从 raw seed bit-exact 重建 bitmap，
+并交叉检查 results/instances/manifest。69,800 episode executions 已全部完成；
+其中包含跨矩阵重复 anchor，不能当作 69,800 个独立样本。所有复现命令见
+[`REPRODUCIBILITY.md`](REPRODUCIBILITY.md)。
 
-## 测试边界
-
-`tests/` 覆盖 A*、D* Lite 增量更新及 A* 最短路一致性、实例确定性、物理
-layout 指纹与 100-map 唯一性、地图 stamp 合并、丢包链路、CARE runner、
-周期反熵的预算/轮转、Scuttlebutt/Merkle/IBLT primitive 与 runner 集成、
-因果时间/cap 指标，以及并行与串行结果一致性。运行：
+## 测试
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python -m pytest -q
 ```
+
+测试覆盖 planner 一致性、stamp 合并、codec/CRC、loss/delay、CARE 证书、
+closest-work 控制、gate negative control 字段、natural bitmap immutability、
+role metrics、100-map 唯一性以及串行/并行一致性。

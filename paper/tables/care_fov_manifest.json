@@ -25,5 +25,7 @@
     "certificate_repair"
   ],
   "matching": "layout fingerprint and network seed held fixed across observation radii and policies",
-  "confidence_interval": "20,000-draw map-cluster bootstrap; paired differences preserve layout and loss trace"
+  "confidence_interval": "20,000-draw map-cluster bootstrap; paired differences preserve layout and loss trace",
+  "primary_reliability_endpoint": "derived seeker CSR",
+  "role_metric_provenance": "Legacy structured rows omit role fields. Seeker CSR is derived exactly as 2*overall_completion_rate-1 after auditing that all paired observers succeed; the identity is never used for random-map controls."
 }

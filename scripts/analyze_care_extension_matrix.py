@@ -11,6 +11,20 @@ from pathlib import Path
 
 import numpy as np
 
+try:
+    from bootstrap_ci import bootstrap_mean_ci
+except ModuleNotFoundError:
+    from scripts.bootstrap_ci import bootstrap_mean_ci
+
+try:
+    from structured_role_metrics import (
+        ROLE_PROVENANCE, is_structured_row, metric_value,
+    )
+except ModuleNotFoundError:  # Imported as ``scripts.analyze_*`` in tests.
+    from scripts.structured_role_metrics import (
+        ROLE_PROVENANCE, is_structured_row, metric_value,
+    )
+
 
 METRICS = (
     "completion_success_rate", "instance_success_rate", "episode_length",
@@ -18,16 +32,15 @@ METRICS = (
     "episode_cpu_ms",
 )
 ABLATION_METRICS = (
-    "completion_success_rate", "episode_length", "attempted_bytes",
+    "seeker_success_rate", "completion_success_rate", "episode_length", "attempted_bytes",
     "mean_path_truth_error", "certificate_candidate_cap_hit_rate",
     "episode_cpu_ms",
 )
 
 
 def bootstrap(values: np.ndarray, seed: int) -> tuple[float, float]:
-    rng = np.random.default_rng(seed)
-    means = rng.choice(values, (20_000, len(values)), replace=True).mean(axis=1)
-    return tuple(float(value) for value in np.quantile(means, (.025, .975)))
+    del seed
+    return bootstrap_mean_ci(values)
 
 
 def write_csv(path: Path, rows: list[dict]) -> None:
@@ -85,12 +98,18 @@ def analyze(input_directory: Path, primary_directory: Path, output_directory: Pa
             raise ValueError(f"{name}: fewer than 100 independent layouts")
         groups = _groups(rows)
         study_groups[name] = groups
+        structured_study = all(is_structured_row(row) for row in rows)
+        if structured_study != any(is_structured_row(row) for row in rows):
+            raise ValueError(f"{name}: structured and random rows must not be mixed")
+        study_metrics = (("seeker_success_rate",) + METRICS) if structured_study else METRICS
         for condition, trials in sorted(groups.items()):
             if set(trials) != expected_keys:
                 raise ValueError(f"{name}: incomplete condition {condition}")
             planner, density, loss, delay, radius, policy = condition
-            for metric_index, metric in enumerate(METRICS):
-                values = np.asarray([float(trials[key][metric]) for key in sorted(expected_keys)])
+            for metric_index, metric in enumerate(study_metrics):
+                values = np.asarray([
+                    metric_value(trials[key], metric) for key in sorted(expected_keys)
+                ])
                 low, high = bootstrap(values, summary_index * 100 + metric_index)
                 summary.append({
                     "study": name, "planner": planner, "density": density,
@@ -110,9 +129,14 @@ def analyze(input_directory: Path, primary_directory: Path, output_directory: Pa
             for comparator, other in sorted(policies.items()):
                 if comparator == "certificate_repair":
                     continue
-                for metric_index, metric in enumerate(ABLATION_METRICS):
+                paired_metrics = ABLATION_METRICS if structured_study else tuple(
+                    metric for metric in ABLATION_METRICS
+                    if metric != "seeker_success_rate"
+                )
+                for metric_index, metric in enumerate(paired_metrics):
                     differences = np.asarray([
-                        float(care[key][metric]) - float(other[key][metric]) for key in sorted(expected_keys)
+                        metric_value(care[key], metric) - metric_value(other[key], metric)
+                        for key in sorted(expected_keys)
                     ])
                     low, high = bootstrap(differences, 200_000 + paired_index * 100 + metric_index)
                     std = float(differences.std(ddof=1))
@@ -157,7 +181,8 @@ def analyze(input_directory: Path, primary_directory: Path, output_directory: Pa
         for comparison_index, (label, ablated) in enumerate(comparisons.items()):
             for metric_index, metric in enumerate(ABLATION_METRICS):
                 differences = np.asarray([
-                    float(full[key][metric]) - float(ablated[key][metric]) for key in sorted(expected_keys)
+                    metric_value(full[key], metric) - metric_value(ablated[key], metric)
+                    for key in sorted(expected_keys)
                 ])
                 low, high = bootstrap(differences, 500_000 + comparison_index * 100 + metric_index)
                 std = float(differences.std(ddof=1))
@@ -177,6 +202,12 @@ def analyze(input_directory: Path, primary_directory: Path, output_directory: Pa
         "episodes": total_rows, "independent_maps_per_condition": 100,
         "primary_fov": "5x5",
         "confidence_interval": "20,000-draw map-cluster bootstrap; all comparisons paired by layout and loss trace",
+        "primary_reliability_endpoint": (
+            "derived seeker CSR for audited structured studies; overall completion "
+            "rate only for random-map negative controls"
+        ),
+        "role_metric_provenance": ROLE_PROVENANCE,
+        "scale_design": "legacy tiled-cluttered-fork stress test (not independent natural scale)",
     }
     (output_directory / "analysis_manifest.json").write_text(json.dumps(result, indent=2) + "\n")
     return result

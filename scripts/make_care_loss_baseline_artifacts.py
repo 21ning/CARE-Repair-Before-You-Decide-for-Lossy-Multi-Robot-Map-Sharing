@@ -10,7 +10,6 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.ticker import ScalarFormatter
 
 
 POLICIES = (
@@ -30,6 +29,20 @@ LABELS = {
 }
 PLANNERS = ("astar", "dstar_lite")
 PLANNER_LABELS = {"astar": "A*", "dstar_lite": "D* Lite"}
+LOSSES = (0.0, .1, .2, .3, .4, .5)
+FIGURE_COMPARATORS = (
+    "one_shot_delta", "deadline_aware_repair", "retry_all_arq",
+)
+FIGURE_COLORS = {
+    "one_shot_delta": "#0072B2",
+    "deadline_aware_repair": "#D55E00",
+    "retry_all_arq": "#6F4C9B",
+}
+FIGURE_STYLES = {
+    "one_shot_delta": "-",
+    "deadline_aware_repair": "--",
+    "retry_all_arq": ":",
+}
 
 
 def _write_csv(path: Path, rows: list[dict]) -> None:
@@ -59,7 +72,8 @@ def make(analysis_directory: Path, table_directory: Path, figure_directory: Path
     primary_rows = []
     for planner in PLANNERS:
         for policy in POLICIES:
-            csr = lookup[(planner, .3, policy, "completion_success_rate")]
+            csr = lookup[(planner, .3, policy, "seeker_success_rate")]
+            overall = lookup[(planner, .3, policy, "completion_success_rate")]
             episode_length = lookup[(planner, .3, policy, "episode_length")]
             traffic = lookup[(planner, .3, policy, "attempted_bytes")]
             primary_rows.append({
@@ -67,6 +81,7 @@ def make(analysis_directory: Path, table_directory: Path, figure_directory: Path
                 "csr_mean": f'{float(csr["mean"]):.4f}',
                 "csr_std": f'{float(csr["std"]):.4f}',
                 "csr_ci95": f'[{float(csr["ci95_low"]):.4f}, {float(csr["ci95_high"]):.4f}]',
+                "overall_csr": f'{float(overall["mean"]):.4f}',
                 "el_mean": f'{float(episode_length["mean"]):.2f}',
                 "el_std": f'{float(episode_length["std"]):.2f}',
                 "el_ci95": (
@@ -85,13 +100,14 @@ def make(analysis_directory: Path, table_directory: Path, figure_directory: Path
         "# CARE baseline comparison at 30% packet loss", "",
         "Each condition uses 100 independent maps. Values are mean ± sample SD; ",
         "brackets give a 20,000-draw map-cluster bootstrap 95% CI.", "",
-        "| Planner | Method | CSR | Mean EL | Attempted traffic (KB) |",
-        "| --- | --- | ---: | ---: | ---: |",
+        "Primary endpoint is seeker-only CSR; overall CSR is retained only as a diagnostic.", "",
+        "| Planner | Method | Seeker CSR | Overall CSR | Mean EL | Attempted traffic (KB) |",
+        "| --- | --- | ---: | ---: | ---: | ---: |",
     ]
     for row in primary_rows:
         markdown.append(
             f'| {row["planner"]} | {row["method"]} | '
-            f'{row["csr_mean"]} ± {row["csr_std"]} {row["csr_ci95"]} | '
+            f'{row["csr_mean"]} ± {row["csr_std"]} {row["csr_ci95"]} | {row["overall_csr"]} | '
             f'{row["el_mean"]} ± {row["el_std"]} {row["el_ci95"]} | '
             f'{row["attempted_kb_mean"]} ± {row["attempted_kb_std"]} '
             f'{row["attempted_kb_ci95"]} |'
@@ -101,7 +117,7 @@ def make(analysis_directory: Path, table_directory: Path, figure_directory: Path
     paired_rows = []
     for planner in PLANNERS:
         for comparator in POLICIES[:-1]:
-            csr = paired_lookup[(planner, .3, comparator, "completion_success_rate")]
+            csr = paired_lookup[(planner, .3, comparator, "seeker_success_rate")]
             episode_length = paired_lookup[(planner, .3, comparator, "episode_length")]
             traffic = paired_lookup[(planner, .3, comparator, "attempted_bytes")]
             paired_rows.append({
@@ -124,7 +140,7 @@ def make(analysis_directory: Path, table_directory: Path, figure_directory: Path
     paired_markdown = [
         "# Paired CARE comparisons at 30% packet loss", "",
         "Differences are CARE minus the matched comparator on each of 100 maps.", "",
-        "| Planner | Comparison | CSR difference [95% CI] | Effect dz | EL difference [95% CI] | Traffic difference KB [95% CI] |",
+        "| Planner | Comparison | Seeker-CSR difference [95% CI] | Effect dz | EL difference [95% CI] | Traffic difference KB [95% CI] |",
         "| --- | --- | ---: | ---: | ---: | ---: |",
     ]
     for row in paired_rows:
@@ -139,34 +155,121 @@ def make(analysis_directory: Path, table_directory: Path, figure_directory: Path
         "\n".join(paired_markdown) + "\n"
     )
 
-    colors = plt.cm.tab10.colors
+    sweep_rows = []
+    for planner in PLANNERS:
+        for loss in LOSSES:
+            for comparator in POLICIES[:-1]:
+                csr = paired_lookup[(planner, loss, comparator, "seeker_success_rate")]
+                episode_length = paired_lookup[(planner, loss, comparator, "episode_length")]
+                traffic = paired_lookup[(planner, loss, comparator, "attempted_bytes")]
+                sweep_rows.append({
+                    "planner": PLANNER_LABELS[planner],
+                    "loss_probability": f"{loss:.1f}",
+                    "comparison": f'CARE - {LABELS[comparator]}',
+                    "paired_maps": csr["paired_maps"],
+                    "csr_difference": f'{float(csr["mean_difference"]):+.4f}',
+                    "csr_std_difference": f'{float(csr["std_difference"]):.4f}',
+                    "csr_ci95": (
+                        f'[{float(csr["ci95_low"]):+.4f}, '
+                        f'{float(csr["ci95_high"]):+.4f}]'
+                    ),
+                    "csr_effect_dz": f'{float(csr["paired_effect_dz"]):+.3f}',
+                    "el_difference": f'{float(episode_length["mean_difference"]):+.2f}',
+                    "el_ci95": (
+                        f'[{float(episode_length["ci95_low"]):+.2f}, '
+                        f'{float(episode_length["ci95_high"]):+.2f}]'
+                    ),
+                    "traffic_kb_difference": (
+                        f'{float(traffic["mean_difference"]) / 1000:+.2f}'
+                    ),
+                    "traffic_kb_std_difference": (
+                        f'{float(traffic["std_difference"]) / 1000:.2f}'
+                    ),
+                    "traffic_kb_ci95": (
+                        f'[{float(traffic["ci95_low"]) / 1000:+.2f}, '
+                        f'{float(traffic["ci95_high"]) / 1000:+.2f}]'
+                    ),
+                })
+    _write_csv(table_directory / "care_loss_paired_sweep.csv", sweep_rows)
+    sweep_markdown = [
+        "# Paired CARE effects across packet-loss rates", "",
+        (
+            "Every difference is CARE minus the matched comparator on the same "
+            "100 maps and deterministic loss traces. Brackets are 20,000-draw "
+            "paired map-cluster bootstrap 95% CIs."
+        ), "",
+        (
+            "| Planner | Loss | Comparison | Δ seeker CSR [95% CI] | paired d_z | "
+            "ΔEL [95% CI] | ΔKB [95% CI] |"
+        ),
+        "| --- | ---: | --- | ---: | ---: | ---: | ---: |",
+    ]
+    for row in sweep_rows:
+        sweep_markdown.append(
+            f'| {row["planner"]} | {row["loss_probability"]} | '
+            f'{row["comparison"]} | {row["csr_difference"]} '
+            f'{row["csr_ci95"]} | {row["csr_effect_dz"]} | '
+            f'{row["el_difference"]} {row["el_ci95"]} | '
+            f'{row["traffic_kb_difference"]} {row["traffic_kb_ci95"]} |'
+        )
+    (table_directory / "care_loss_paired_sweep.md").write_text(
+        "\n".join(sweep_markdown) + "\n"
+    )
+
     fig, axes = plt.subplots(2, 2, figsize=(10.5, 7.2), sharex="col")
     for column, planner in enumerate(PLANNERS):
-        for policy_index, policy in enumerate(POLICIES):
-            losses = [0, .1, .2, .3, .4, .5]
-            csr = [float(lookup[(planner, loss, policy, "completion_success_rate")]["mean"]) for loss in losses]
-            traffic = [float(lookup[(planner, loss, policy, "attempted_bytes")]["mean"]) / 1000 for loss in losses]
-            style = "-" if policy == "certificate_repair" else "--" if policy == "deadline_aware_repair" else ":"
-            width = 2.8 if policy == "certificate_repair" else 1.5
-            axes[0, column].plot(losses, csr, style, linewidth=width, marker="o", markersize=3,
-                                 color=colors[policy_index], label=LABELS[policy])
-            axes[1, column].plot(losses, traffic, style, linewidth=width, marker="o", markersize=3,
-                                 color=colors[policy_index], label=LABELS[policy])
+        for comparator in FIGURE_COMPARATORS:
+            csr_points = [
+                paired_lookup[(planner, loss, comparator, "seeker_success_rate")]
+                for loss in LOSSES
+            ]
+            traffic_points = [
+                paired_lookup[(planner, loss, comparator, "attempted_bytes")]
+                for loss in LOSSES
+            ]
+            csr = [float(point["mean_difference"]) for point in csr_points]
+            csr_low = [float(point["ci95_low"]) for point in csr_points]
+            csr_high = [float(point["ci95_high"]) for point in csr_points]
+            traffic = [float(point["mean_difference"]) / 1000 for point in traffic_points]
+            traffic_low = [float(point["ci95_low"]) / 1000 for point in traffic_points]
+            traffic_high = [float(point["ci95_high"]) / 1000 for point in traffic_points]
+            label = f'CARE − {LABELS[comparator]}'
+            color = FIGURE_COLORS[comparator]
+            style = FIGURE_STYLES[comparator]
+            axes[0, column].plot(
+                LOSSES, csr, style, linewidth=2.0, marker="o", markersize=3.5,
+                color=color, label=label,
+            )
+            axes[0, column].fill_between(
+                LOSSES, csr_low, csr_high, alpha=.14, color=color,
+            )
+            axes[1, column].plot(
+                LOSSES, traffic, style, linewidth=2.0, marker="o", markersize=3.5,
+                color=color, label=label,
+            )
+            axes[1, column].fill_between(
+                LOSSES, traffic_low, traffic_high, alpha=.14, color=color,
+            )
         axes[0, column].set_title(PLANNER_LABELS[planner])
-        axes[0, column].set_ylabel("Completion success rate")
-        axes[1, column].set_ylabel("Attempted traffic (KB)")
-        axes[1, column].set_yscale("log")
-        axes[1, column].set_ylim(50, 720)
-        axes[1, column].set_yticks((50, 75, 100, 200, 400, 700))
-        axes[1, column].yaxis.set_major_formatter(ScalarFormatter())
+        axes[0, column].set_ylabel("Δ seeker completion rate")
+        axes[1, column].set_ylabel("Δ attempted traffic (KB)")
         axes[1, column].set_xlabel("Packet-loss probability")
+        axes[0, column].axhline(0.0, color="#333333", linewidth=.9, alpha=.75)
+        axes[1, column].axhline(0.0, color="#333333", linewidth=.9, alpha=.75)
         axes[0, column].grid(alpha=.2)
         axes[1, column].grid(alpha=.2)
     handles, labels = axes[0, 0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=4, frameon=False)
-    fig.tight_layout(rect=(0, 0, 1, .91))
+    fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False)
+    fig.text(
+        .5, .925, "Shading: paired map-cluster bootstrap 95% CI",
+        ha="center", va="center", fontsize=9,
+    )
+    fig.tight_layout(rect=(0, 0, 1, .89))
     fig.savefig(figure_directory / "care_loss_baseline_sweep.png", dpi=220)
-    fig.savefig(figure_directory / "care_loss_baseline_sweep.pdf")
+    fig.savefig(
+        figure_directory / "care_loss_baseline_sweep.pdf",
+        metadata={"CreationDate": None, "ModDate": None},
+    )
     plt.close(fig)
 
 

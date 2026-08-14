@@ -3,6 +3,8 @@
   "episodes": 9600,
   "independent_maps_per_condition": 100,
   "unique_physical_layouts": 100,
+  "primary_endpoint": "seeker_success_rate",
+  "overall_csr_note": "diagnostic only: the structured suite contains one annotated observer for each seeker",
   "planners": [
     "astar",
     "dstar_lite"

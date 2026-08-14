@@ -1,0 +1,35 @@
+# This file is consumed by scripts/run_care_natural_scale.py, which expands
+# each declared non-tiled scale into an ordinary frozen run_psr_suite config.
+instance_family: natural_critical_random
+seed_count: 100
+scales:
+  - {num_agents: 4, map_size: 24, max_episode_steps: 64}
+  - {num_agents: 8, map_size: 32, max_episode_steps: 64}
+  - {num_agents: 16, map_size: 48, max_episode_steps: 80}
+  - {num_agents: 32, map_size: 64, max_episode_steps: 96}
+obstacle_densities: [0.20]
+observation_radius: 2
+natural_max_raw_attempts: 128
+natural_candidate_draws_per_attempt: 40000
+data_bytes_per_agent_per_step: 4459
+control_bytes_per_agent_per_step: 512
+max_digest_peers: 1
+repair_interval_steps: 1
+sync_interval_steps: 4
+corridor_horizon: 8
+corridor_radius: 1
+certificate_max_cells: 8
+certificate_uncertainty_order: 2
+digest_base_bytes: 16
+digest_entry_bytes: 6
+replica_digest_bytes: 16
+path_weighted_sigma: 1.0
+ack_bytes: 8
+patch_base_bytes: 4
+loss_probabilities: [0.30]
+delay_steps: [0]
+planners: [astar, dstar_lite]
+policies: [one_shot_delta, certificate_repair]
+link_seed: 20260808
+workers: 32
+output_directory: outputs/care_natural_scale_100map

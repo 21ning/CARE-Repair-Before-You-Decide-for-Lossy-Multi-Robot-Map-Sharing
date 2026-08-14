@@ -11,6 +11,16 @@ from pathlib import Path
 
 import numpy as np
 
+try:
+    from bootstrap_ci import bootstrap_mean_ci
+except ModuleNotFoundError:
+    from scripts.bootstrap_ci import bootstrap_mean_ci
+
+try:
+    from structured_role_metrics import ROLE_PROVENANCE, metric_value
+except ModuleNotFoundError:  # Imported as ``scripts.analyze_*`` in tests.
+    from scripts.structured_role_metrics import ROLE_PROVENANCE, metric_value
+
 
 PLANNERS = ("astar", "dstar_lite")
 DELAYS = (0, 1, 2, 4)
@@ -19,7 +29,7 @@ POLICIES = (
     "certificate_repair",
 )
 METRICS = (
-    "completion_success_rate", "instance_success_rate", "episode_length",
+    "seeker_success_rate", "completion_success_rate", "instance_success_rate", "episode_length",
     "attempted_bytes", "attempted_control_bytes", "attempted_repair_bytes",
     "mean_path_truth_error", "planning_cpu_ms", "certificate_cpu_ms",
     "episode_cpu_ms",
@@ -33,9 +43,8 @@ DIAGNOSTICS = (
 
 
 def bootstrap(values: np.ndarray, seed: int) -> tuple[float, float]:
-    rng = np.random.default_rng(seed)
-    means = rng.choice(values, (20_000, len(values)), replace=True).mean(axis=1)
-    return tuple(float(value) for value in np.quantile(means, (.025, .975)))
+    del seed
+    return bootstrap_mean_ci(values)
 
 
 def write_csv(path: Path, rows: list[dict]) -> None:
@@ -50,6 +59,9 @@ def analyze(
 ) -> dict:
     output_directory.mkdir(parents=True, exist_ok=False)
     rows = list(csv.DictReader((input_directory / "results.csv").open()))
+    direct_role_metrics = all(
+        row.get("seeker_success_rate", "") not in (None, "") for row in rows
+    )
     if certificate_directory is not None:
         replacements = list(csv.DictReader((certificate_directory / "results.csv").open()))
         replacement_conditions = {
@@ -91,7 +103,9 @@ def analyze(
     for condition_index, condition in enumerate(sorted(groups)):
         planner, delay, policy = condition
         for metric_index, metric in enumerate(METRICS):
-            values = np.asarray([float(groups[condition][key][metric]) for key in ordered_keys])
+            values = np.asarray([
+                metric_value(groups[condition][key], metric) for key in ordered_keys
+            ])
             low, high = bootstrap(values, condition_index * 100 + metric_index)
             summary.append({
                 "planner": planner, "delay_steps": delay, "policy": policy,
@@ -109,7 +123,7 @@ def analyze(
                 right = groups[(planner, delay, comparator)]
                 for metric_index, metric in enumerate(METRICS):
                     differences = np.asarray([
-                        float(left[key][metric]) - float(right[key][metric])
+                        metric_value(left[key], metric) - metric_value(right[key], metric)
                         for key in ordered_keys
                     ])
                     low, high = bootstrap(differences, 50_000 + comparison_index * 100 + metric_index)
@@ -151,27 +165,27 @@ def analyze(
     }
     gates = []
     for planner in PLANNERS:
-        reliability = lookup[(planner, 0, "deadline_aware_repair", "completion_success_rate")]
-        delayed_reliability = lookup[(planner, 1, "deadline_aware_repair", "completion_success_rate")]
+        reliability = lookup[(planner, 0, "deadline_aware_repair", "seeker_success_rate")]
+        delayed_reliability = lookup[(planner, 1, "deadline_aware_repair", "seeker_success_rate")]
         traffic = lookup[(planner, 0, "deadline_aware_repair", "attempted_bytes")]
-        baseline = lookup[(planner, 0, "one_shot_delta", "completion_success_rate")]
+        baseline = lookup[(planner, 0, "one_shot_delta", "seeker_success_rate")]
         certificate_cpu = float(summary_lookup[(planner, 0, "certificate_repair", "episode_cpu_ms")]["mean"])
-        care_cpu = float(summary_lookup[(planner, 0, "deadline_aware_repair", "episode_cpu_ms")]["mean"])
+        care_lite_cpu = float(summary_lookup[(planner, 0, "deadline_aware_repair", "episode_cpu_ms")]["mean"])
         gate = {
             "planner": planner,
-            "noninferior_to_care": reliability["ci95_low"] >= -0.02,
-            "noninferior_to_care_at_delay1": delayed_reliability["ci95_low"] >= -0.02,
-            "traffic_no_higher_than_care": traffic["ci95_high"] <= 0.0,
+            "noninferior_to_care_lite": reliability["ci95_low"] >= -0.02,
+            "noninferior_to_care_lite_at_delay1": delayed_reliability["ci95_low"] >= -0.02,
+            "traffic_no_higher_than_care_lite": traffic["ci95_high"] <= 0.0,
             "improves_over_one_shot": baseline["ci95_low"] > 0.0,
-            "episode_cpu_ratio_vs_care": certificate_cpu / care_cpu,
-            "cpu_ratio_below_3": certificate_cpu / care_cpu <= 3.0,
-            "csr_vs_care": reliability["mean_difference"],
-            "csr_vs_care_at_delay1": delayed_reliability["mean_difference"],
-            "bytes_vs_care": traffic["mean_difference"],
+            "episode_cpu_ratio_vs_care_lite": certificate_cpu / care_lite_cpu,
+            "cpu_ratio_below_3": certificate_cpu / care_lite_cpu <= 3.0,
+            "csr_vs_care_lite": reliability["mean_difference"],
+            "csr_vs_care_lite_at_delay1": delayed_reliability["mean_difference"],
+            "bytes_vs_care_lite": traffic["mean_difference"],
         }
         gate["pass"] = all(gate[key] for key in (
-            "noninferior_to_care", "noninferior_to_care_at_delay1",
-            "traffic_no_higher_than_care",
+            "noninferior_to_care_lite", "noninferior_to_care_lite_at_delay1",
+            "traffic_no_higher_than_care_lite",
             "improves_over_one_shot", "cpu_ratio_below_3",
         ))
         gates.append(gate)
@@ -182,10 +196,16 @@ def analyze(
             "csr_noninferiority_checked_at_delays": [0, 1],
             "traffic": "paired 95% CI upper bound <= 0",
             "one_shot": "paired CSR 95% CI lower bound > 0",
-            "episode_cpu_ratio": "<= 3x current CARE",
+            "episode_cpu_ratio": "<= 3x CARE-Lite",
         },
+        "comparator": "CARE-Lite (deadline_aware_repair)",
         "planners": gates,
-        "promote_certificate_care": all(gate["pass"] for gate in gates),
+        "promote_certificate_as_care": all(gate["pass"] for gate in gates),
+        "primary_reliability_endpoint": "seeker CSR",
+        "role_metric_provenance": (
+            "Direct seeker_success_rate serialized by the role-aware runner."
+            if direct_role_metrics else ROLE_PROVENANCE
+        ),
     }
     (output_directory / "gate_decision.json").write_text(json.dumps(decision, indent=2) + "\n")
     return decision

@@ -1,134 +1,114 @@
-# Published reconciliation baselines
+# Generic reconciliation controls
 
-CARE is compared with three algorithms originating outside this project. The
-goal is a controlled algorithmic comparison, not a claim that the repository
-reproduces the original storage systems or their deployment environments.
-Every adaptation retains the paper's reconciliation primitive while replacing
-the original application state with the same versioned occupancy cells used by
-CARE.
+This study adapts three published reconciliation ideas to CARE's versioned
+binary occupancy cells. It is a controlled primitive comparison, **not** an
+exact reproduction of the original storage systems or deployment settings.
+The paper and tables must call them Scuttlebutt-, Dynamo/Merkle- and
+IBLT-inspired occupancy-map adaptations.
 
-## Common experimental contract
+## Shared communication contract
 
-All methods run inside `PSRClosedLoopRunner` with the same:
+Every control runs in `PSRClosedLoopRunner` with the same:
 
-- per-robot `BeliefMap`, local observations, starts and goals;
-- A* or incremental D* Lite planner;
+- per-robot local `BeliefMap`, observations, starts and goals;
+- A* or incremental D* Lite motion planner;
 - directed packet-loss trace and delay;
 - 13-byte versioned cell record and canonical patch codec;
-- 4,459-byte data and 512-byte control caps per sender per step;
-- 100 physically distinct maps paired by layout and network seed.
+- 4,459-byte data and 512-byte control caps per sender/step;
+- attempted-byte accounting, including dropped packets;
+- paired controlled layout and network seed.
 
-No baseline reads the truth map, another robot's memory, or CARE's path
-certificate. All summaries charge attempted encoded bytes, including packets
-lost by the channel.
+No control reads truth, another robot's in-memory replica, a goal-conditioned
+CARE certificate or CARE's realized query length.
 
-## Scuttlebutt-Depth
+The 100 layouts per controlled condition are unique background-clutter
+realizations under a fixed multifork decision structure. This supports paired
+mechanism inference but not broad decision-graph generalization.
 
-The implementation follows van Renesse et al.'s per-participant maximum-version
-digest and depth scheduling. A holder archives the current mapping for every
-`(origin, cell)` key. A push--pull exchange sends mappings newer than the
-requester's per-origin maximum, serving origins with the deepest backlog first
-and versions within an origin from oldest to newest. This ordering is required:
-an MTU-truncated message must not expose a later version while omitting an
-earlier current mapping from the same origin.
+## Scuttlebutt-Depth adaptation
 
-The existing observation step and row-major cell index form a unique,
-strictly increasing per-origin sequence number, avoiding extra uncharged wire
-fields. Scuttlebutt replaces ordinary one-shot dissemination rather than being
-layered on top of it, because unordered one-shot delivery would violate its
-maximum-version invariant.
+The implementation uses a per-origin maximum-version digest and backlog-depth
+scheduling. A holder archives the current `(origin, cell)` mappings, sends
+records newer than the requester's maximum, prioritizes origins by backlog, and
+orders versions oldest-first. Observation step plus row-major cell index gives
+a strictly increasing local sequence without uncharged wire fields.
 
-## Dynamo-style Merkle anti-entropy
+Scuttlebutt replaces ordinary one-shot dissemination because unordered
+one-shot delivery would violate the maximum-version summary. This preserves the
+reconciliation idea, not the complete original flow-control system.
 
-Each explicit replica is hashed into a complete 16-ary Merkle tree over all map
-cells. Peers compare the root, descend only through mismatching child hashes,
-and send a canonical one-cell patch at a mismatching leaf. A child response is
-260 bytes under the 512-byte cap. Mismatching siblings are retained across
-ticks and traversed depth-first; explicit match acknowledgements and retained
-outstanding nodes make the traversal retryable after loss. A peer session lasts
-four ticks before deterministic rotation.
+## Dynamo/Merkle adaptation
 
-This is Dynamo-style hierarchical difference localization, not a reproduction
-of the complete Dynamo key-value service. Normal cell updates remain one-shot;
-Merkle exchange is the repair layer.
+Each explicit occupancy replica is hashed into a complete 16-ary tree. Peers
+compare roots, descend through mismatching child hashes, and patch mismatching
+leaves. Outstanding branches persist across loss, explicit match ACKs prevent
+restart, and a peer session lasts four ticks before deterministic rotation.
+Normal deltas remain one-shot; Merkle exchange is only the repair layer.
 
-## Partitioned IBLT reconciliation
+This is hierarchical difference localization inspired by Dynamo. It is not a
+reproduction of the Dynamo key-value service, consistency model or workload.
 
-Each record is the exact 13-byte canonical cell delta. Peers subtract fixed-size
-IBLT sketches and peel positive and negative set differences using three hash
-functions and checksum validation. A 21-cell sketch occupies 491 bytes and
-fits the common control cap.
+## Partitioned IBLT adaptation
 
-A single 491-byte table cannot decode the initially large difference between
-32×32 partial maps. The map is therefore split into sixteen deterministic
-modulo-index partitions, one rotated per repair tick. This preserves the
-published signed subtract-and-peel primitive while ensuring small enough set
-differences without increasing the link budget. A peer is held for a complete
-16-partition cycle before rotation, rather than receiving unrelated shards.
-Normal deltas remain one-shot, and successful decodes return only local-positive
-records.
+Each key/value record is the canonical 13-byte cell delta. Peers subtract
+fixed-size IBLT sketches and peel signed set differences with three hashes and
+checksum validation. A 21-cell sketch occupies 491 bytes. Because one such
+table cannot peel an initially large 32×32 partial-map difference, the map is
+split into 16 deterministic partitions, one per repair tick, and a peer remains
+selected for a complete cycle. Successful decodes return local-positive cells.
 
-## Optimization and freeze rule
+This preserves subtract-and-peel reconciliation while adapting sharding and
+the record representation to the common control MTU.
 
-Optimization was limited to protocol mechanics observable in the original
-reconciliation problem. The binary Merkle smoke test repeatedly exhausted or
-lost long root-to-leaf exchanges, so fanout, acknowledgements, persistent
-branches and peer-session length were introduced. The unpartitioned IBLT could
-not peel the initial map difference under a 512-byte MTU, so the frozen
-partition count was chosen to place about 64 map cells in each shard. Small
-pilot runs selected settings using leaf-repair and sketch-decode activity, not
-CARE-relative CSR. No variant was allowed to access robot paths, goals,
-commitment time, certificate cells or truth state. The 16-ary/16-partition
-settings were then frozen before the 21,600-episode three-FOV matrix.
+## Freeze and activity checks
 
-## Audited result
+Protocol tuning used only mechanical activity: Merkle leaf repairs and IBLT
+decode success. It did not inspect CARE-relative completion. The frozen matrix
+has 21,600 executions: three FOVs, six losses, two planners, three adapted
+controls plus One-shot/Retry-All/CARE, and 100 paired controlled maps.
 
-The frozen matrix contains 21,600 complete episodes: 100 independent maps,
-3×3/5×5/7×7 sensing, six loss rates, A*/D* Lite, the three external methods,
-One-shot, Retry-All, and CARE. At 30% packet loss in the primary 5×5 condition:
+Merkle performs about 23 leaf repairs per primary episode. IBLT decodes about
+87% of received sketches and sends roughly 370 patch records. Their outcomes
+therefore are not inactive/no-op failures.
 
-| Planner | Method | CSR | Attempted KB |
-| --- | --- | ---: | ---: |
-| A* | Scuttlebutt-Depth | 0.7125 | 80.15 |
-| A* | Dynamo-style Merkle AE | 0.6713 | 73.18 |
-| A* | Partitioned IBLT | 0.6813 | 152.80 |
-| A* | CARE | 0.7362 | 53.25 |
-| D* Lite | Scuttlebutt-Depth | 0.7288 | 80.80 |
-| D* Lite | Dynamo-style Merkle AE | 0.6900 | 73.56 |
-| D* Lite | Partitioned IBLT | 0.6963 | 152.87 |
-| D* Lite | CARE | 0.7688 | 53.25 |
+## Role-aware interpretation
 
-Scuttlebutt is the strongest external method: versus One-shot, its paired CSR
-gain is +0.0413 `[0.0187, 0.0625]` with A* and +0.0387
-`[0.0175, 0.0600]` with D* Lite. CARE still improves over Scuttlebutt by
-+0.0238 `[0.0088, 0.0387]` and +0.0400 `[0.0225, 0.0575]`, while sending
-26.90/27.54 KB less.
+This matrix was produced before direct role columns were added. On the audited
+controlled maps every observer completes, so seeker CSR is derived exactly as
+`2 × overall CSR - 1`; values below are explicitly **derived**, while overall
+CSR remains a diagnostic.
 
-The optimized Merkle implementation reaches and transmits 23.51/22.26
-mismatching leaves per 5×5 episode. Partitioned IBLT successfully decodes
-87.51%/87.22% of received sketches and sends 371.04/369.77 patch records. Their
-weaker task outcomes are therefore not no-op implementation failures: generic
-difference localization/recovery often does not finish early enough, or does
-not prioritize the cells that change the imminent route decision.
+| Planner | Method | Derived seeker CSR | Overall CSR (diagnostic) | Attempted KB |
+| --- | --- | ---: | ---: | ---: |
+| A* | Scuttlebutt-Depth (adapt.) | 0.4250 | 0.7125 | 80.15 |
+| A* | Dynamo/Merkle (adapt.) | 0.3425 | 0.6713 | 73.18 |
+| A* | Partitioned IBLT (adapt.) | 0.3625 | 0.6813 | 152.80 |
+| A* | CARE | 0.4725 | 0.7362 | 53.25 |
+| D* Lite | Scuttlebutt-Depth (adapt.) | 0.4575 | 0.7288 | 80.80 |
+| D* Lite | Dynamo/Merkle (adapt.) | 0.3800 | 0.6900 | 73.56 |
+| D* Lite | Partitioned IBLT (adapt.) | 0.3925 | 0.6963 | 152.87 |
+| D* Lite | CARE | 0.5375 | 0.7688 | 53.25 |
 
-The sensing sweep reinforces that boundary. At 3×3 every method remains at
-0.5000 CSR because communication cannot invent unobserved context. At 7×7 with
-A*, CARE reaches 0.9375 versus 0.8712 Scuttlebutt, 0.8562 IBLT and 0.8400
-Merkle. CARE's paired gains over those methods are respectively +0.0663
-`[0.0413, 0.0925]`, +0.0813 `[0.0625, 0.1000]`, and +0.0975
-`[0.0788, 0.1163]`. Full mean/SD/CIs and paired effects are retained in
-`paper/tables/care_external_baselines_*.{csv,md}`. In particular,
-`care_external_baselines_fov_paired` reports CARE-minus-external effects for
-every sensing range and planner, while `care_external_baselines_vs_oneshot`
-shows how much each generic reconciliation method adds over unrepaired
-one-shot dissemination.
+At A*, CARE-minus-adaptation derived seeker effects are +0.0475 for
+Scuttlebutt, +0.1300 for Merkle and +0.1100 for IBLT; their seeker confidence
+intervals are obtained by the same exact affine transformation of each paired
+map difference, not by treating robots as independent samples. D* Lite keeps
+the same ordering. CARE also uses less traffic in all three comparisons.
+
+The defensible conclusion is narrow: in this controlled occupancy-cell
+contract, generic state reconciliation often repairs cells too late or in the
+wrong order for the protected imminent decision. It is not evidence that CARE
+dominates the original published systems in their native tasks.
+
+Generated tables live in `paper/tables/care_external_baselines_*`. They retain
+the original overall diagnostic for traceability; submission text must use the
+derived role endpoint or regenerate the matrix with direct role fields.
 
 ## References
 
 - R. van Renesse et al., [“Efficient Reconciliation and Flow Control for
-  Anti-Entropy Protocols”](https://doi.org/10.1145/1529974.1529983), LADIS,
-  2008.
+  Anti-Entropy Protocols”](https://doi.org/10.1145/1529974.1529983), 2008.
 - G. DeCandia et al., [“Dynamo: Amazon's Highly Available Key-value
-  Store”](https://doi.org/10.1145/1294261.1294281), SOSP, 2007.
+  Store”](https://doi.org/10.1145/1294261.1294281), 2007.
 - M. T. Goodrich and M. Mitzenmacher, [“Invertible Bloom Lookup
-  Tables”](https://doi.org/10.1109/ALLERTON.2011.6120248), Allerton, 2011.
+  Tables”](https://doi.org/10.1109/ALLERTON.2011.6120248), 2011.

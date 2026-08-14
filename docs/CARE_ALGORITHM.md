@@ -89,31 +89,27 @@ cells. The reported hit rate is therefore an audited approximation-pressure
 diagnostic, not an outcome inferred from successful episodes. Separate paired
 ablations use `n=4`, `n=8`, `n=12`, `q=1`, and `q=2`.
 
-## Route-commitment certificate
+## Deadline and the rejected route-witness gate
 
-Scenario separation determines which cells distinguish locally plausible
-actions. Positive transport delay adds a second requirement: the repair must
-arrive before the robot enters an uncertain branch.
+The final algorithm has one deadline rule: an action-conflicting scenario pair
+enters `E_t` only when its first divergent action is at least the measured
+query--patch round trip away. This deadline is attached to the exact object the
+certificate must distinguish, so it remains inside the optimization above.
 
-The receiver also plans on interval endpoints:
+We also evaluated an auxiliary optimistic/pessimistic route witness. It used
+the first UNKNOWN index `k` on the optimistic route, defined
+`tau=max(0,k-1)`, and either included or suppressed a one-hop branch witness
+according to `tau >= L_rtt`. A strict 100-map paired ablation rejected this
+hard gate: at delay two it saved about 6.1 KB but reduced seeker success by
+0.0525/0.0575 with A*/D* Lite. The ungated route witness also had no detected
+reliability value at delay four. Consequently neither route-witness variant is
+part of final CARE. Both remain executable under explicit ablation-only policy
+names so the negative result is reproducible.
 
-- `pi+`: UNKNOWN is traversable (the operational optimistic plan);
-- `pi-`: UNKNOWN is blocked (the pessimistic bound).
-
-Let `k` be the first UNKNOWN index on `pi+`. The latest safe repair time is
-`tau=max(0,k-1)`. If `tau < L_rtt`, that route-commitment repair is suppressed
-and recorded as deadline-infeasible. Otherwise CARE forms a one-hop influence
-set from the two branches between their first divergence and reconvergence.
-
-At zero delay, the exact scenario certificate alone is sufficient and
-byte-minimal. At positive delay, final CARE uses the **dual certificate**
-
-```text
-Q_CARE = Q_scenario union Q_commitment.
-```
-
-This protects both scenario-level action identifiability and the later
-cell-entry commitment. Duplicate cells are removed before binary encoding.
+This distinction matters: rejecting the first-UNKNOWN proxy does not reject
+deadline-aware certification. Final CARE still excludes precisely those
+scenario conflicts whose action divergence occurs before a returned patch can
+arrive; it simply does not append a second, empirically unsupported witness.
 
 ## Protocol execution
 

@@ -1,0 +1,22 @@
+# Natural non-tiled external validity
+
+100 untouched Bernoulli maps conditioned on a predeclared action-conflict, visibility, path-length, communication-window, and disjointness predicate bundle.
+
+| Planner | Method | Seeker CSR mean ± SD [95% CI] | EL mean ± SD | Attempted KB |
+| --- | --- | ---: | ---: | ---: |
+| A* | No Communication | 0.9300 ± 0.1511 [0.9000, 0.9575] | 42.96 ± 13.34 | 0.00 |
+| A* | One-shot | 0.9450 ± 0.1156 [0.9200, 0.9675] | 41.66 ± 14.15 | 65.46 |
+| A* | Retry-All | 0.9550 ± 0.1029 [0.9350, 0.9750] | 40.09 ± 13.81 | 199.51 |
+| A* | Periodic Full | 0.9600 ± 0.0921 [0.9425, 0.9775] | 40.28 ± 13.52 | 434.28 |
+| A* | Path-Aware Top-K | 0.9475 ± 0.1083 [0.9250, 0.9675] | 41.14 ± 14.25 | 71.76 |
+| A* | Single-Cell | 0.9500 ± 0.1066 [0.9275, 0.9700] | 41.06 ± 14.02 | 69.08 |
+| A* | CARE-Lite | 0.9500 ± 0.1066 [0.9275, 0.9700] | 40.87 ± 14.05 | 74.31 |
+| A* | CARE | 0.9500 ± 0.1066 [0.9275, 0.9700] | 41.03 ± 14.02 | 70.35 |
+| D* Lite | No Communication | 0.9325 ± 0.1501 [0.9025, 0.9600] | 42.53 ± 13.04 | 0.00 |
+| D* Lite | One-shot | 0.9525 ± 0.1048 [0.9300, 0.9725] | 41.08 ± 13.74 | 65.84 |
+| D* Lite | Retry-All | 0.9575 ± 0.1008 [0.9375, 0.9750] | 39.71 ± 13.50 | 200.24 |
+| D* Lite | Periodic Full | 0.9625 ± 0.0897 [0.9450, 0.9800] | 39.90 ± 13.21 | 431.58 |
+| D* Lite | Path-Aware Top-K | 0.9475 ± 0.1083 [0.9250, 0.9675] | 41.00 ± 14.21 | 71.81 |
+| D* Lite | Single-Cell | 0.9500 ± 0.1066 [0.9275, 0.9700] | 40.93 ± 13.97 | 69.14 |
+| D* Lite | CARE-Lite | 0.9500 ± 0.1066 [0.9275, 0.9700] | 40.73 ± 13.98 | 74.37 |
+| D* Lite | CARE | 0.9500 ± 0.1066 [0.9275, 0.9700] | 40.86 ± 13.98 | 70.39 |

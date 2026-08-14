@@ -58,18 +58,24 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
     primary = []
     for planner in ("astar", "dstar_lite"):
         for policy in ORDER:
-            csr = lookup[(2, planner, policy, "completion_success_rate")]
+            csr = lookup[(2, planner, policy, "seeker_success_rate")]
+            overall = lookup[(2, planner, policy, "completion_success_rate")]
             episode_length = lookup[(2, planner, policy, "episode_length")]
             traffic = lookup[(2, planner, policy, "attempted_bytes")]
             cpu = lookup[(2, planner, policy, "episode_cpu_ms")]
             primary.append({
                 "planner": "A*" if planner == "astar" else "D* Lite",
                 "method": LABELS[policy],
-                "csr_mean": f'{float(csr["mean"]):.4f}',
-                "csr_std": f'{float(csr["std"]):.4f}',
-                "csr_ci95": (
+                "seeker_csr_mean": f'{float(csr["mean"]):.4f}',
+                "seeker_csr_std": f'{float(csr["std"]):.4f}',
+                "seeker_csr_ci95": (
                     f'[{float(csr["ci95_low"]):.4f}, '
                     f'{float(csr["ci95_high"]):.4f}]'
+                ),
+                "overall_completion_mean": f'{float(overall["mean"]):.4f}',
+                "overall_completion_ci95": (
+                    f'[{float(overall["ci95_low"]):.4f}, '
+                    f'{float(overall["ci95_high"]):.4f}]'
                 ),
                 "el_mean": f'{float(episode_length["mean"]):.2f}',
                 "el_std": f'{float(episode_length["std"]):.2f}',
@@ -83,14 +89,16 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
     write_csv(table_directory / "care_task_aware_primary.csv", primary)
     lines = [
         "# Task-aware baseline ladder at 5x5 sensing and 30% packet loss", "",
-        "100 independent matched maps; mean ± sample SD and map-cluster 95% CI.", "",
-        "| Planner | Method | CSR mean ± SD [95% CI] | EL mean ± SD [95% CI] | Attempted KB | Episode CPU ms |",
-        "| --- | --- | ---: | ---: | ---: | ---: |",
+        "100 matched structured maps; mean ± sample SD and map-cluster 95% CI. Seeker CSR is exactly derived from the audited observer/seeker pairing; overall completion is diagnostic only.", "",
+        "| Planner | Method | Derived seeker CSR mean ± SD [95% CI] | Overall completion diagnostic [95% CI] | EL mean ± SD [95% CI] | Attempted KB | Episode CPU ms |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in primary:
         lines.append(
-            f'| {row["planner"]} | {row["method"]} | {row["csr_mean"]} ± '
-            f'{row["csr_std"]} {row["csr_ci95"]} | {row["el_mean"]} ± '
+            f'| {row["planner"]} | {row["method"]} | {row["seeker_csr_mean"]} ± '
+            f'{row["seeker_csr_std"]} {row["seeker_csr_ci95"]} | '
+            f'{row["overall_completion_mean"]} {row["overall_completion_ci95"]} | '
+            f'{row["el_mean"]} ± '
             f'{row["el_std"]} {row["el_ci95"]} | {row["attempted_kb"]} | '
             f'{row["episode_cpu_ms"]} |'
         )
@@ -102,15 +110,15 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
     for radius in (1, 2, 3):
         for planner in ("astar", "dstar_lite"):
             for policy in ORDER:
-                csr = lookup[(radius, planner, policy, "completion_success_rate")]
+                csr = lookup[(radius, planner, policy, "seeker_success_rate")]
                 episode_length = lookup[(radius, planner, policy, "episode_length")]
                 traffic = lookup[(radius, planner, policy, "attempted_bytes")]
                 fov.append({
                     "fov": f"{2 * radius + 1}x{2 * radius + 1}",
                     "planner": "A*" if planner == "astar" else "D* Lite",
                     "method": LABELS[policy],
-                    "csr_mean": f'{float(csr["mean"]):.4f}',
-                    "csr_ci95": (
+                    "seeker_csr_mean": f'{float(csr["mean"]):.4f}',
+                    "seeker_csr_ci95": (
                         f'[{float(csr["ci95_low"]):.4f}, '
                         f'{float(csr["ci95_high"]):.4f}]'
                     ),
@@ -124,14 +132,14 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
     write_csv(table_directory / "care_task_aware_fov.csv", fov)
     lines = [
         "# Task-aware baseline ladder across sensing ranges", "",
-        "All conditions use 30% packet loss and 100 matched maps.", "",
-        "| FOV | Planner | Method | CSR [95% CI] | Mean EL [95% CI] | Attempted KB |",
+        "All conditions use 30% packet loss and 100 matched structured maps; reliability is derived seeker CSR.", "",
+        "| FOV | Planner | Method | Derived seeker CSR [95% CI] | Mean EL [95% CI] | Attempted KB |",
         "| --- | --- | --- | ---: | ---: | ---: |",
     ]
     for row in fov:
         lines.append(
             f'| {row["fov"]} | {row["planner"]} | {row["method"]} | '
-            f'{row["csr_mean"]} {row["csr_ci95"]} | {row["el_mean"]} '
+            f'{row["seeker_csr_mean"]} {row["seeker_csr_ci95"]} | {row["el_mean"]} '
             f'{row["el_ci95"]} | {row["attempted_kb"]} |'
         )
     (table_directory / "care_task_aware_fov.md").write_text(
@@ -144,7 +152,7 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
             for comparator in NEAREST:
                 csr = paired_lookup[(
                     radius, planner, "certificate_repair", comparator,
-                    "completion_success_rate",
+                    "seeker_success_rate",
                 )]
                 traffic = paired_lookup[(
                     radius, planner, "certificate_repair", comparator,
@@ -158,8 +166,8 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
                     "fov": f"{2 * radius + 1}x{2 * radius + 1}",
                     "planner": "A*" if planner == "astar" else "D* Lite",
                     "comparison": f'CARE - {LABELS[comparator]}',
-                    "csr_difference": f'{float(csr["mean_difference"]):+.4f}',
-                    "csr_ci95": (
+                    "seeker_csr_difference": f'{float(csr["mean_difference"]):+.4f}',
+                    "seeker_csr_ci95": (
                         f'[{float(csr["ci95_low"]):+.4f}, '
                         f'{float(csr["ci95_high"]):+.4f}]'
                     ),
@@ -180,14 +188,14 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
     write_csv(table_directory / "care_task_aware_paired.csv", effects)
     lines = [
         "# CARE paired against the closest task-aware baselines", "",
-        "Positive ΔCSR favors CARE; negative ΔKB means CARE sends less.", "",
-        "| FOV | Planner | Comparison | ΔCSR [95% CI] | paired d_z | ΔEL [95% CI] | ΔKB [95% CI] |",
+        "Positive Δ derived seeker CSR favors CARE; negative ΔKB means CARE sends less.", "",
+        "| FOV | Planner | Comparison | Δ derived seeker CSR [95% CI] | paired d_z | ΔEL [95% CI] | ΔKB [95% CI] |",
         "| --- | --- | --- | ---: | ---: | ---: | ---: |",
     ]
     for row in effects:
         lines.append(
             f'| {row["fov"]} | {row["planner"]} | {row["comparison"]} | '
-            f'{row["csr_difference"]} {row["csr_ci95"]} | {row["paired_dz"]} | '
+            f'{row["seeker_csr_difference"]} {row["seeker_csr_ci95"]} | {row["paired_dz"]} | '
             f'{row["el_difference"]} {row["el_ci95"]} | '
             f'{row["traffic_difference_kb"]} {row["traffic_ci95_kb"]} |'
         )

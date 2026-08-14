@@ -1,34 +1,55 @@
 # CARE claim--evidence audit
 
-| Claim | Evidence | Frozen status / boundary |
+The primary outcome is decision-critical seeker CSR. Overall robot CSR is a
+diagnostic because the controlled multifork observers always complete and
+create a structural 0.5 floor. “Controlled maps” below means independent
+background clutter under a fixed decision template, not independent decision
+structures.
+
+| Claim | Evidence | Status / boundary |
 | --- | --- | --- |
-| The query is minimum encoded size in the declared scenario family. | Exact hitting-set enumeration, theorem and unit tests. | Proven for uniform 6-byte entries, q≤2 and the capped candidate set; not an unbounded robust-map theorem. |
-| Results use 100 independent physical maps. | Seed-free `layout_fingerprint`; analyzers reject duplicates; topology/density/scale 100-layout tests. | Supported. A seed label alone no longer counts as independence. |
-| CARE improves over One-shot in the 5×5 primary task. | A*: +0.0650 [0.0488, 0.0813]; D*: +0.0788 [0.0612, 0.0963]. | Supported with paired maps/traces. |
-| CARE improves over published generic reconciliation baselines. | At 5×5, A* CARE minus Scuttlebutt/Merkle/IBLT is +0.0238/+0.0650/+0.0550; all paired 95% CIs are positive. | Supported by the 21,600-episode external/FOV matrix. |
-| CARE improves over a path-only query heuristic. | CARE minus Path-Aware Top-K is +0.0088 [0.0013, 0.0175] A* and +0.0075 [0.0000, 0.0150] D* Lite, while saving about 1.1 KB. | Small support at 5×5; the D* interval touches zero and 7×7 intervals include zero. |
-| Exact joint certification materially improves reliability over Single-Cell Sensitivity. | CARE minus Single-Cell is +0.0037 [-0.0037, 0.0125] A* and +0.0063 [-0.0013, 0.0150] D* Lite. | **Not supported at 5×5.** CARE retains a declared joint-scenario guarantee but not detected empirical dominance. |
-| Task awareness explains much of CARE's One-shot gain. | Path-Aware and Single-Cell improve A* by +0.0563/+0.0612 versus CARE's +0.0650. | Supported; the paper must not attribute the full gain to exact hitting-set certification. |
-| CARE is traffic-efficient versus reliable recovery. | Saves 101.20/101.75 KB versus Retry-All at a 0.0225/0.0175 CSR cost. | Supported as a tradeoff, not dominance. |
-| CARE occupies the middle of the information-sharing spectrum. | At 5×5, No Communication is 0.5000 CSR/0 bytes; CARE is 0.7362/53.25 KB; Continuous Full Sync is 0.7250/891.80 KB with A*. | Supported under the same lossy, capped link. Full sync is not an ideal perfect-information oracle. |
-| CARE retains PSR-UT/CARE-Lite reliability with less traffic. | Paired CSR CIs include zero; savings are about 9.5/3.8 KB. | Supported at 30% loss and zero delay. |
-| Benefits persist across sensing ranges. | CARE gain is 0.0000, +0.0650, +0.0975 at 3×3/5×5/7×7 with A*. | Supported only for 5×5 and 7×7. **Rejected at 3×3**, where map context is the bottleneck. |
-| The decision window explains delay behavior. | Signed window 2/0/-2/-6 at delays 0/1/2/4; gains disappear when non-positive. | Supported in the controlled fork geometry. |
-| cap=8 is a useful bounded middle point. | cap=4 loses 0.0213 CSR; cap=12 adds no detected CSR and costs ~1.48 s more. | Supported as an empirical/theoretical tradeoff, not a universal optimum. |
-| CARE generalizes across topology. | Positive gains on all three topologies, but +0.1537 on T and only +0.0112/+0.0213 on the other two. | Qualitative support with strong topology dependence. |
-| CARE helps arbitrary random maps. | Three of four random-control CIs include zero. | **Rejected.** The contribution is decision-critical repair, not generic exploration. |
-| CARE passes the old 3× compute gate. | Exact/CARE-Lite episode CPU ratios are 3.99× A* and 3.09× D*. | **Rejected.** Bounded and measured, not negligible. |
-| CARE dominates all baselines. | Retry-All/Periodic often obtain higher CSR at much higher traffic. | **Rejected.** CARE is a low-traffic operating point. |
-| CARE outperforms DCC/SCRIMP/PPO. | No representation-matched reproduction exists. | Not claimed; they solve different learned-policy tasks. |
+| The CARE query has minimum encoded size within the declared scenario family. | Exact uniform-cost hitting-set enumeration plus theorem/tests. | Proven only for the capped candidate set, `q≤2`, and uniform 6-byte query entries; not an unbounded robust-map theorem. |
+| CARE improves seeker completion over One-shot at the controlled 5×5 primary point. | A*: +0.1300 [0.1000, 0.1625]; D*: +0.1575 [0.1225, 0.1925]. | Supported by 100 paired clutter realizations/loss traces. |
+| CARE is a traffic-efficient alternative to reliable recovery. | Versus Retry-All, CARE saves 101.20/101.75 KB but loses 0.0450/0.0350 seeker CSR. | Supported as a tradeoff, not dominance. |
+| CARE improves materially over every closest task-aware method. | No difference is detected versus OCBC-FS, and paired CIs versus PGSC, R-D, Single-Cell and most D* controls include zero. | **Rejected.** Path/task awareness explains much of the empirical gain. |
+| CARE improves over Path-Aware Top-K. | +0.0175 [0.0025, 0.0325] A*; +0.0150 [0.0000, 0.0300] D*. CARE saves about 1.1 KB. | Small controlled-population support; D* CI touches zero and most 7×7 intervals include zero. |
+| Exact joint certification materially improves reliability over Single-Cell. | +0.0075 [-0.0075, 0.0250] A*; +0.0125 [-0.0025, 0.0300] D*. | **Not detected.** The formal bounded joint-scenario guarantee remains distinct from empirical superiority. |
+| CARE outperforms OCBC, path-guided compression, R-D and VoI as published algorithms. | Repository implements binary-cell, codec-matched inspired controls rather than their native belief/codec systems. | **Not claimed.** Only the explicitly documented adaptations are compared. |
+| CARE improves over generic reconciliation controls. | Controlled 5×5 derived seeker differences versus Scuttlebutt/Merkle/IBLT are positive. | Supported only for the repository's occupancy-cell adaptations; not full-system reproductions. |
+| Final CARE uses only the exact deadline-feasible scenario certificate. | Final `certificate_repair` appends neither auxiliary route witness; both witness policies have explicit ablation-only names. | Supported by implementation/tests and method audit. |
+| The auxiliary route-slack hard gate has incremental value. | At delay 2, gated-minus-ungated auxiliary-witness seeker effect is -0.0525 [-0.0725, -0.0325] A* and -0.0575 [-0.0800, -0.0375] D*. | **Rejected.** It saves traffic but fails the preregistered -0.02 non-inferiority criterion. Neither auxiliary witness is final CARE. |
+| Delay zero gate ablation is implementation-equivalent. | 200 planner/map pairs, zero non-CPU differences. | Supported negative control. |
+| CARE works at every sensing range. | A* seeker gain is 0.0000/0.1300/0.1950 at 3×3/5×5/7×7. | Supported only at 5×5 and 7×7; **rejected at 3×3**. |
+| The controlled 100 maps establish broad structural generalization. | All share the protected multifork causal structure while clutter changes. | **Rejected.** They establish replication across clutter, not decision-graph diversity. |
+| The legacy 4--32 robot scale study establishes non-tiled generalization. | It tiles the same fork motif. | **Rejected.** Retained only as controlled computational/load stress. |
+| CARE helps arbitrary random MAPF maps. | Most generic random-control CIs include zero. | **Rejected.** The target claim is decision-critical repair, not generic exploration. |
+| CARE improves over One-shot on the natural conditioned population. | A*: +0.0050 [-0.0050, 0.0150]; D*: -0.0025 [-0.0125, 0.0075]. | **Not supported.** Both intervals cross zero. |
+| CARE improves over No Communication on the natural conditioned population. | A*: +0.0200 [-0.0050, 0.0450]; D*: +0.0175 [-0.0075, 0.0450]. | **Not supported.** The target population is conditioned Bernoulli maps, not unconditioned random MAPF. |
+| CARE generalizes across non-tiled 4/8/16/32-robot natural scale. | All eight CARE-minus-One-shot seeker CIs cross zero. | **Not supported.** The completed suite establishes an external-validity boundary, not broad gain. |
+| CARE has negligible overhead or passes the old 3× gate. | Exact/CARE-Lite episode CPU ratios exceed the old threshold. | **Rejected.** Compute is bounded and measured, not negligible. |
+| CARE dominates every baseline. | Retry-All and Periodic Full often obtain higher seeker CSR at much greater traffic. | **Rejected.** CARE is a selective low-traffic operating point. |
+| CARE outperforms DCC/SCRIMP/PPO. | No representation- and task-matched reproduction exists. | Not claimed; these learned-policy systems solve a different action/communication task. |
 
-## Freeze checklist
+## Statistical and artifact checklist
 
-- 59,000/59,000 planned episodes complete;
-- 100 seed-free physical layout fingerprints in every condition;
-- A*/D* Lite, six loss rates, delay, FOV, density, topology and scale retained;
-- every ablation paired with full CARE on the same 100 layouts/traces;
-- mean EL, mean CSR/traffic, sample SD, 20,000-draw cluster CI and paired effect size retained;
-- cap-hit rate and conditional-event coverage retained;
-- 3×3, non-positive deadline, random-map and compute negative boundaries retained;
-- independent overlapping reruns agree on every non-CPU field;
-- tests, README, method document, manuscript and generated tables use the same numbers.
+- `observer_ids`, `seeker_ids`, `critical_pairs`, `completion_steps`, completion
+  masks, seeker CSR, pair success and censored seeker completion time are
+  serialized directly in new result rows.
+- Old controlled matrices may derive seeker CSR only through the audited exact
+  identity `(2 × overall CSR) - 1`; such values must be labelled derived.
+- Mean, sample SD and 20,000-draw map-cluster CI are reported; all analyzers
+  share one fixed public cluster-resampling index, and paired effects preserve
+  map and deterministic loss-trace matching.
+- The controlled 100-map population is described as fixed-structure,
+  independently cluttered multifork maps.
+- The legacy scale sweep is labelled tiled-motif stress.
+- External and closest-work controls are labelled codec-matched inspired
+  adaptations, never exact paper reproductions.
+- The negative 3×3, route-gate, random-map and compute boundaries remain
+  visible.
+- Raw outputs are gitignored; configs, code, five complete accepted-layout
+  manifests and derived paper tables/figures are tracked.
+- The natural analyzer rehashes serialized NPZs, bit-exactly regenerates raw
+  bitmaps from seeds, and cross-checks results, instances and manifests.
+- Completed protocol accounting is 69,800 executions including repeated anchors;
+  this count is never presented as 69,800 independent samples.

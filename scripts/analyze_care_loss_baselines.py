@@ -11,6 +11,11 @@ from pathlib import Path
 
 import numpy as np
 
+try:
+    from bootstrap_ci import bootstrap_mean_ci
+except ModuleNotFoundError:
+    from scripts.bootstrap_ci import bootstrap_mean_ci
+
 
 PLANNERS = ("astar", "dstar_lite")
 LOSSES = (0.0, .1, .2, .3, .4, .5)
@@ -20,7 +25,9 @@ POLICIES = (
     "utility_triggered_repair", "deadline_aware_repair", "certificate_repair",
 )
 METRICS = (
-    "completion_success_rate", "instance_success_rate", "episode_length",
+    "seeker_success_rate", "critical_pair_success_rate",
+    "observer_success_rate", "completion_success_rate", "all_seekers_success",
+    "instance_success_rate", "episode_length",
     "attempted_bytes", "attempted_control_bytes", "attempted_repair_bytes",
     "mean_path_truth_error", "planning_cpu_ms", "episode_cpu_ms",
 )
@@ -28,9 +35,8 @@ METRICS = (
 
 def bootstrap(values: np.ndarray, seed: int) -> tuple[float, float]:
     """Cluster bootstrap over independent maps (the experimental unit)."""
-    rng = np.random.default_rng(seed)
-    means = rng.choice(values, (20_000, len(values)), replace=True).mean(axis=1)
-    return tuple(float(value) for value in np.quantile(means, (.025, .975)))
+    del seed  # retained for call-site compatibility; the ordered data key the RNG.
+    return bootstrap_mean_ci(values)
 
 
 def write_csv(path: Path, rows: list[dict]) -> None:
@@ -119,7 +125,7 @@ def analyze(input_directory: Path, output_directory: Path) -> None:
             points = {
                 policy: (
                     float(summary_lookup[(planner, loss, policy, "attempted_bytes")]["mean"]),
-                    float(summary_lookup[(planner, loss, policy, "completion_success_rate")]["mean"]),
+                    float(summary_lookup[(planner, loss, policy, "seeker_success_rate")]["mean"]),
                 )
                 for policy in POLICIES
             }
@@ -133,7 +139,7 @@ def analyze(input_directory: Path, output_directory: Path) -> None:
                 pareto.append({
                     "planner": planner, "loss_probability": loss,
                     "policy": policy, "attempted_bytes": traffic,
-                    "completion_success_rate": reliability,
+                    "seeker_success_rate": reliability,
                     "pareto_efficient": not dominators,
                     "dominated_by": ";".join(dominators),
                 })
@@ -143,6 +149,11 @@ def analyze(input_directory: Path, output_directory: Path) -> None:
         "episodes": expected,
         "independent_maps_per_condition": 100,
         "unique_physical_layouts": 100,
+        "primary_endpoint": "seeker_success_rate",
+        "overall_csr_note": (
+            "diagnostic only: the structured suite contains one annotated "
+            "observer for each seeker"
+        ),
         "planners": list(PLANNERS),
         "loss_probabilities": list(LOSSES),
         "policies": list(POLICIES),
