@@ -289,6 +289,11 @@ def test_new_triggered_repairs_keep_ordinary_deltas_one_shot() -> None:
         ReplicaPolicy.UTILITY_TRIGGERED_REPAIR,
         ReplicaPolicy.DEADLINE_AWARE_REPAIR,
         ReplicaPolicy.CERTIFICATE_REPAIR,
+        ReplicaPolicy.CERTIFICATE_REPAIR_NO_COMMITMENT_GATE,
+        ReplicaPolicy.OCBC_FORWARD_SIMULATION,
+        ReplicaPolicy.PATH_GUIDED_COMPRESSION,
+        ReplicaPolicy.RATE_DISTORTION_COMPRESSION,
+        ReplicaPolicy.VOI_REPAIR,
         ReplicaPolicy.PATH_AWARE_TOP_K_REPAIR,
         ReplicaPolicy.SINGLE_CELL_SENSITIVITY_REPAIR,
     ):
@@ -404,3 +409,92 @@ def test_critical_decision_timing_metrics_are_evaluation_only_and_auditable() ->
     assert result.mean_route_commitment_step is not None
     assert result.mean_usable_communication_window_steps is not None
     assert result.certificate_candidate_cap_checks > 0
+
+
+def test_structured_results_report_role_and_pair_completion_directly() -> None:
+    instance = generate_cluttered_multifork_instance(
+        seed=4, obstacle_density=.2, observation_radius=2,
+    )
+    result = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.ONE_SHOT_DELTA,
+        config=replace(_config(loss=.3), repair_interval_steps=1),
+    ).run(instance)
+
+    assert result.observer_ids == (0, 2, 4, 6)
+    assert result.seeker_ids == (1, 3, 5, 7)
+    assert result.observer_success_rate == 1.0
+    assert result.seeker_success_rate == sum(
+        result.completed[index] for index in result.seeker_ids
+    ) / 4
+    assert result.critical_pair_success_rate == sum(
+        result.completed[left] and result.completed[right]
+        for left, right in result.critical_pairs
+    ) / 4
+
+
+def test_commitment_gate_has_a_zero_delay_negative_control() -> None:
+    instance = generate_cluttered_multifork_instance(
+        seed=3, obstacle_density=.2, observation_radius=2,
+    )
+    config = replace(_config(loss=.3), repair_interval_steps=1)
+    gated = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.CERTIFICATE_REPAIR_ROUTE_GATE, config=config,
+    ).run(instance)
+    ungated = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.CERTIFICATE_REPAIR_NO_COMMITMENT_GATE, config=config,
+    ).run(instance)
+
+    assert gated.action_trace == ungated.action_trace
+    assert gated.completed == ungated.completed
+    assert gated.network_summary == ungated.network_summary
+    assert gated.commitment_gate_checks == ungated.commitment_gate_checks == 0
+
+
+def test_commitment_gate_records_exactly_what_it_suppresses() -> None:
+    instance = generate_cluttered_multifork_instance(
+        seed=0, obstacle_density=.2, observation_radius=2,
+    )
+    config = replace(
+        _config(loss=.3), repair_interval_steps=1,
+        link=LinkConfig(loss_probability=.3, delay_steps=2, seed=500),
+    )
+    gated = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.CERTIFICATE_REPAIR_ROUTE_GATE, config=config,
+    ).run(instance)
+    ungated = PSRClosedLoopRunner(
+        policy=ReplicaPolicy.CERTIFICATE_REPAIR_NO_COMMITMENT_GATE, config=config,
+    ).run(instance)
+
+    assert gated.commitment_gate_checks == ungated.commitment_gate_checks > 0
+    assert gated.commitment_gate_closed == ungated.commitment_gate_closed > 0
+    # Once the extra ungated patches arrive, later receiver replicas may
+    # diverge; each decision still uses the same raw-witness construction.
+    assert gated.commitment_raw_query_cells >= gated.commitment_suppressed_query_cells
+    assert ungated.commitment_raw_query_cells > 0
+    assert gated.commitment_suppressed_query_cells > 0
+    assert ungated.commitment_suppressed_query_cells == 0
+    assert ungated.certificate_query_cells >= gated.certificate_query_cells
+
+
+@pytest.mark.parametrize("policy", [
+    ReplicaPolicy.OCBC_FORWARD_SIMULATION,
+    ReplicaPolicy.PATH_GUIDED_COMPRESSION,
+    ReplicaPolicy.RATE_DISTORTION_COMPRESSION,
+    ReplicaPolicy.VOI_REPAIR,
+])
+def test_closest_work_adaptations_are_deterministic_and_budgeted(policy: ReplicaPolicy) -> None:
+    config = replace(
+        _config(loss=.3), repair_interval_steps=1,
+        certificate_max_cells=5, ocbc_samples=32,
+    )
+    first = PSRClosedLoopRunner(policy=policy, config=config).run(_instance())
+    second = PSRClosedLoopRunner(policy=policy, config=config).run(_instance())
+    assert first == second
+    assert first.task_aware_checks > 0
+    assert first.task_aware_candidate_cells >= first.task_aware_query_cells
+    assert first.certificate_checks == 0
+    assert first.network_summary["attempted_bytes"] == (
+        first.network_summary["attempted_data_bytes"]
+        + first.network_summary["attempted_control_bytes"]
+        + first.network_summary["attempted_repair_bytes"]
+    )

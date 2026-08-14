@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from hashlib import sha256
 from time import process_time
 from typing import Callable, Iterable
 
@@ -26,7 +27,9 @@ from cmvr.communication import (
     encode_digest_query, encode_iblt_sketch, encode_merkle_children,
     encode_merkle_match, encode_merkle_probe, encode_patch, encode_replica_digest,
     encode_scuttle_digest, full_replica_chunk, minimum_scenario_certificate,
-    ordered_digest_peers, path_aware_top_k_plan, peel_iblt, planning_corridor,
+    ocbc_forward_simulation_plan, ordered_digest_peers, path_aware_top_k_plan,
+    path_guided_compression_plan, rate_distortion_compression_plan,
+    voi_per_byte_plan, peel_iblt, planning_corridor,
     path_weight,
     record_scuttle_update, replica_digest, scenario_blocked_sets,
     scuttle_depth_updates, scuttle_max_versions, single_cell_sensitivity_plan,
@@ -99,7 +102,15 @@ class PSRResult:
     certificate_candidate_cap_hits: int
     certificate_candidate_cap_hit_rate: float
     mean_uncapped_certificate_candidates: float
+    commitment_gate_checks: int
+    commitment_gate_closed: int
+    commitment_raw_query_cells: int
+    commitment_suppressed_query_cells: int
     critical_pair_count: int
+    observer_ids: tuple[int, ...]
+    seeker_ids: tuple[int, ...]
+    critical_pairs: tuple[tuple[int, int], ...]
+    completion_steps: tuple[int | None, ...]
     critical_peer_observation_events: int
     critical_self_observation_events: int
     critical_route_commitment_events: int
@@ -112,6 +123,8 @@ class PSRResult:
     task_aware_checks: int
     task_aware_candidate_cells: int
     task_aware_query_cells: int
+    closest_work_planning_calls: int
+    closest_work_simulation_samples: int
     single_cell_planning_calls: int
     single_cell_sensitive_cells: int
     single_cell_infeasible_cells: int
@@ -135,6 +148,57 @@ class PSRResult:
     @property
     def instance_success_rate(self) -> float:
         return float(all(self.completed))
+
+    @property
+    def seeker_success_rate(self) -> float:
+        """Completion rate of decision-critical seekers, if annotated."""
+        if not self.seeker_ids:
+            return self.completion_success_rate
+        return sum(self.completed[index] for index in self.seeker_ids) / len(self.seeker_ids)
+
+    @property
+    def observer_success_rate(self) -> float:
+        """Completion rate of annotated remote observers."""
+        if not self.observer_ids:
+            return self.completion_success_rate
+        return sum(self.completed[index] for index in self.observer_ids) / len(self.observer_ids)
+
+    @property
+    def critical_pair_success_rate(self) -> float:
+        """Fraction of annotated observer--seeker pairs completing together."""
+        if not self.critical_pairs:
+            return self.instance_success_rate
+        return sum(
+            self.completed[observer] and self.completed[seeker]
+            for observer, seeker in self.critical_pairs
+        ) / len(self.critical_pairs)
+
+    @property
+    def mean_seeker_completion_step(self) -> float | None:
+        """Mean arrival step among completed annotated seekers."""
+        values = [
+            self.completion_steps[index] for index in self.seeker_ids
+            if self.completion_steps[index] is not None
+        ]
+        return float(np.mean(values)) if values else None
+
+    @property
+    def mean_observer_completion_step(self) -> float | None:
+        values = [
+            self.completion_steps[index] for index in self.observer_ids
+            if self.completion_steps[index] is not None
+        ]
+        return float(np.mean(values)) if values else None
+
+    @property
+    def mean_seeker_completion_step_censored(self) -> float:
+        """Restricted mean arrival time, censoring non-completion at horizon."""
+        ids = self.seeker_ids or tuple(range(len(self.completed)))
+        return float(np.mean([
+            self.completion_steps[index]
+            if self.completion_steps[index] is not None else self.episode_length
+            for index in ids
+        ]))
 
 
 @dataclass
@@ -194,8 +258,11 @@ class PSRClosedLoopRunner:
         self._certificate_query_cells = 0
         self._certificate_candidate_cap_checks = self._certificate_candidate_cap_hits = 0
         self._certificate_uncapped_candidate_cells = 0
+        self._commitment_gate_checks = self._commitment_gate_closed = 0
+        self._commitment_raw_query_cells = self._commitment_suppressed_query_cells = 0
         self._task_aware_checks = self._task_aware_candidate_cells = 0
         self._task_aware_query_cells = self._single_cell_planning_calls = 0
+        self._closest_work_planning_calls = self._closest_work_simulation_samples = 0
         self._single_cell_sensitive_cells = self._single_cell_infeasible_cells = 0
         self._scuttle_digest_exchanges = self._scuttle_patch_updates = 0
         self._merkle_nodes_compared = self._merkle_leaf_repairs = 0
@@ -253,8 +320,11 @@ class PSRClosedLoopRunner:
         self._certificate_query_cells = 0
         self._certificate_candidate_cap_checks = self._certificate_candidate_cap_hits = 0
         self._certificate_uncapped_candidate_cells = 0
+        self._commitment_gate_checks = self._commitment_gate_closed = 0
+        self._commitment_raw_query_cells = self._commitment_suppressed_query_cells = 0
         self._task_aware_checks = self._task_aware_candidate_cells = 0
         self._task_aware_query_cells = self._single_cell_planning_calls = 0
+        self._closest_work_planning_calls = self._closest_work_simulation_samples = 0
         self._single_cell_sensitive_cells = self._single_cell_infeasible_cells = 0
         self._scuttle_digest_exchanges = self._scuttle_patch_updates = 0
         self._merkle_nodes_compared = self._merkle_leaf_repairs = 0
@@ -284,6 +354,7 @@ class PSRClosedLoopRunner:
         outboxes: list[dict[tuple[str, int], _DeliveryTask]] = [dict() for _ in range(instance.num_agents)]
         full_repair_outboxes: list[dict[tuple[str, int], _DeliveryTask]] = [dict() for _ in range(instance.num_agents)]
         completed = [False] * instance.num_agents
+        completion_steps: list[int | None] = [None] * instance.num_agents
         active_repair_start: list[int | None] = [None] * instance.num_agents
         recovery_latencies: list[int] = []
         traces: list[ReplicaStep] = []
@@ -346,7 +417,9 @@ class PSRClosedLoopRunner:
             observations, _, _, _ = environment.step(actions)
             latest = self._positions(environment)
             for index, position in enumerate(latest):
-                completed[index] = completed[index] or position == instance.goals[index]
+                if not completed[index] and position == instance.goals[index]:
+                    completed[index] = True
+                    completion_steps[index] = step + 1
             if all(completed):
                 break
 
@@ -397,7 +470,16 @@ class PSRClosedLoopRunner:
                 self._certificate_uncapped_candidate_cells / self._certificate_candidate_cap_checks
                 if self._certificate_candidate_cap_checks else 0.0
             ),
-            len(critical_pairs), len(observed_peer), len(observed_self), len(commitments),
+            self._commitment_gate_checks,
+            self._commitment_gate_closed,
+            self._commitment_raw_query_cells,
+            self._commitment_suppressed_query_cells,
+            len(critical_pairs),
+            tuple(pair.observer_id for pair in critical_pairs),
+            tuple(pair.seeker_id for pair in critical_pairs),
+            tuple((pair.observer_id, pair.seeker_id) for pair in critical_pairs),
+            tuple(completion_steps),
+            len(observed_peer), len(observed_self), len(commitments),
             float(np.mean(observed_peer)) if observed_peer else None,
             float(np.mean(observed_self)) if observed_self else None,
             float(np.mean(commitments)) if commitments else None,
@@ -405,7 +487,10 @@ class PSRClosedLoopRunner:
             float(np.mean(usable_windows)) if usable_windows else None,
             float(np.mean(decision_before_self)) if decision_before_self else None,
             self._task_aware_checks, self._task_aware_candidate_cells,
-            self._task_aware_query_cells, self._single_cell_planning_calls,
+            self._task_aware_query_cells,
+            self._closest_work_planning_calls,
+            self._closest_work_simulation_samples,
+            self._single_cell_planning_calls,
             self._single_cell_sensitive_cells, self._single_cell_infeasible_cells,
             self._scuttle_digest_exchanges, self._scuttle_patch_updates,
             self._merkle_nodes_compared, self._merkle_leaf_repairs,
@@ -442,6 +527,12 @@ class PSRClosedLoopRunner:
             ReplicaPolicy.UTILITY_TRIGGERED_REPAIR,
             ReplicaPolicy.DEADLINE_AWARE_REPAIR,
             ReplicaPolicy.CERTIFICATE_REPAIR,
+            ReplicaPolicy.CERTIFICATE_REPAIR_ROUTE_GATE,
+            ReplicaPolicy.CERTIFICATE_REPAIR_NO_COMMITMENT_GATE,
+            ReplicaPolicy.OCBC_FORWARD_SIMULATION,
+            ReplicaPolicy.PATH_GUIDED_COMPRESSION,
+            ReplicaPolicy.RATE_DISTORTION_COMPRESSION,
+            ReplicaPolicy.VOI_REPAIR,
             ReplicaPolicy.PATH_AWARE_TOP_K_REPAIR,
             ReplicaPolicy.SINGLE_CELL_SENSITIVITY_REPAIR,
             ReplicaPolicy.MERKLE_ANTI_ENTROPY,
@@ -460,6 +551,26 @@ class PSRClosedLoopRunner:
             self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, deadline_aware=True, goals=goals)
         if self.policy is ReplicaPolicy.CERTIFICATE_REPAIR and step % self.config.repair_interval_steps == 0:
             self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, certificate_triggered=True, goals=goals)
+        if self.policy is ReplicaPolicy.CERTIFICATE_REPAIR_ROUTE_GATE and step % self.config.repair_interval_steps == 0:
+            self._send_queries(
+                network, step, beliefs, control_budget, paths, positions,
+                regional_only=False, certificate_triggered=True,
+                include_route_witness=True, commitment_gate=True, goals=goals,
+            )
+        if self.policy is ReplicaPolicy.CERTIFICATE_REPAIR_NO_COMMITMENT_GATE and step % self.config.repair_interval_steps == 0:
+            self._send_queries(
+                network, step, beliefs, control_budget, paths, positions,
+                regional_only=False, certificate_triggered=True,
+                include_route_witness=True, commitment_gate=False, goals=goals,
+            )
+        if self.policy is ReplicaPolicy.OCBC_FORWARD_SIMULATION and step % self.config.repair_interval_steps == 0:
+            self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, external_method="ocbc_fs", goals=goals)
+        if self.policy is ReplicaPolicy.PATH_GUIDED_COMPRESSION and step % self.config.repair_interval_steps == 0:
+            self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, external_method="pgsc", goals=goals)
+        if self.policy is ReplicaPolicy.RATE_DISTORTION_COMPRESSION and step % self.config.repair_interval_steps == 0:
+            self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, external_method="brd", goals=goals)
+        if self.policy is ReplicaPolicy.VOI_REPAIR and step % self.config.repair_interval_steps == 0:
+            self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, external_method="voi", goals=goals)
         if self.policy is ReplicaPolicy.PATH_AWARE_TOP_K_REPAIR and step % self.config.repair_interval_steps == 0:
             self._send_queries(network, step, beliefs, control_budget, paths, positions, regional_only=False, path_aware_top_k=True)
         if self.policy is ReplicaPolicy.SINGLE_CELL_SENSITIVITY_REPAIR and step % self.config.repair_interval_steps == 0:
@@ -522,6 +633,12 @@ class PSRClosedLoopRunner:
                     ReplicaPolicy.ACTION_TRIGGERED_REPAIR, ReplicaPolicy.UTILITY_TRIGGERED_REPAIR,
                     ReplicaPolicy.DEADLINE_AWARE_REPAIR,
                     ReplicaPolicy.CERTIFICATE_REPAIR,
+                    ReplicaPolicy.CERTIFICATE_REPAIR_ROUTE_GATE,
+                    ReplicaPolicy.CERTIFICATE_REPAIR_NO_COMMITMENT_GATE,
+                    ReplicaPolicy.OCBC_FORWARD_SIMULATION,
+                    ReplicaPolicy.PATH_GUIDED_COMPRESSION,
+                    ReplicaPolicy.RATE_DISTORTION_COMPRESSION,
+                    ReplicaPolicy.VOI_REPAIR,
                     ReplicaPolicy.PATH_AWARE_TOP_K_REPAIR,
                     ReplicaPolicy.SINGLE_CELL_SENSITIVITY_REPAIR,
                     ReplicaPolicy.MERKLE_ANTI_ENTROPY,
@@ -696,8 +813,11 @@ class PSRClosedLoopRunner:
         action_only: bool = False, utility_triggered: bool = False,
         deadline_aware: bool = False,
         certificate_triggered: bool = False,
+        include_route_witness: bool = False,
+        commitment_gate: bool = True,
         path_aware_top_k: bool = False,
         single_cell_sensitive: bool = False,
+        external_method: str | None = None,
         goals: tuple[Coordinate, ...] | None = None,
     ) -> None:
         for requester_id, path in enumerate(paths):
@@ -725,6 +845,8 @@ class PSRClosedLoopRunner:
                 certificate = self._certificate_plan(
                     beliefs[requester_id], positions[requester_id],
                     goals[requester_id], path, requester_id,
+                    include_route_witness=include_route_witness,
+                    commitment_gate=commitment_gate,
                 )
                 if not certificate.cells:
                     continue
@@ -741,6 +863,15 @@ class PSRClosedLoopRunner:
                 task_aware_plan = self._single_cell_sensitivity_plan(
                     beliefs[requester_id], positions[requester_id],
                     goals[requester_id], path,
+                )
+                if not task_aware_plan.cells:
+                    continue
+            if external_method is not None:
+                if goals is None:
+                    raise ValueError("closest-work repair adaptations require receiver goals")
+                task_aware_plan = self._external_task_aware_plan(
+                    external_method, beliefs[requester_id], positions[requester_id],
+                    goals[requester_id], path, requester_id=requester_id,
                 )
                 if not task_aware_plan.cells:
                     continue
@@ -1176,7 +1307,9 @@ class PSRClosedLoopRunner:
 
     def _deadline_plan(
         self, belief: BeliefMap, position: Coordinate, goal: Coordinate,
-        optimistic_path: tuple[Coordinate, ...], requester_id: int,
+        optimistic_path: tuple[Coordinate, ...], requester_id: int, *,
+        enforce_deadline: bool = True,
+        record_commitment_gate: bool = False,
     ) -> DecisionRepairPlan:
         """Derive a local repair deadline and byte-minimal witness set."""
         self._deadline_trigger_checks += 1
@@ -1188,12 +1321,26 @@ class PSRClosedLoopRunner:
         self._pessimistic_planning_calls += 1
         self._planning_cpu_seconds += elapsed
         self._utility_trigger_cpu_seconds += elapsed
-        plan = deadline_decision_repair_plan(
+        raw_plan = deadline_decision_repair_plan(
             belief, optimistic_path, pessimistic_path,
             round_trip_steps=2 * self.config.link.delay_steps,
             max_horizon=self.config.corridor_horizon,
             max_cells=self.config.max_digest_cells_per_message(),
+            enforce_deadline=False,
         )
+        if record_commitment_gate and raw_plan.ambiguous:
+            self._commitment_gate_checks += 1
+            self._commitment_raw_query_cells += len(raw_plan.cells)
+            if not raw_plan.feasible:
+                self._commitment_gate_closed += 1
+                if enforce_deadline:
+                    self._commitment_suppressed_query_cells += len(raw_plan.cells)
+        plan = raw_plan
+        if enforce_deadline and raw_plan.ambiguous and not raw_plan.feasible:
+            plan = DecisionRepairPlan(
+                raw_plan.ambiguous, raw_plan.feasible,
+                raw_plan.decision_slack_steps, raw_plan.round_trip_steps, (),
+            )
         if plan.ambiguous:
             self._deadline_ambiguous_receivers += 1
             if plan.decision_slack_steps is not None:
@@ -1207,7 +1354,9 @@ class PSRClosedLoopRunner:
 
     def _certificate_plan(
         self, belief: BeliefMap, position: Coordinate, goal: Coordinate,
-        optimistic_path: tuple[Coordinate, ...], requester_id: int,
+        optimistic_path: tuple[Coordinate, ...], requester_id: int, *,
+        include_route_witness: bool = False,
+        commitment_gate: bool = True,
     ) -> ScenarioCertificate:
         """Solve the bounded scenario-separation certificate exactly."""
         self._certificate_checks += 1
@@ -1250,13 +1399,16 @@ class PSRClosedLoopRunner:
             candidates, scenario_paths,
             round_trip_steps=2 * self.config.link.delay_steps,
         )
-        if self.config.link.delay_steps > 0:
-            # With positive transport latency, protect both the earliest
-            # feasible action distinctions and the later cell-entry
-            # commitment.  At zero delay the exact action certificate alone
-            # is sufficient and remains byte-minimal.
+        if include_route_witness and self.config.link.delay_steps > 0:
+            # Auxiliary route-witness variants are retained only to reproduce
+            # the matched gate ablation.  The experiment rejected the hard
+            # first-UNKNOWN slack gate at delay two, so final CARE does not add
+            # this component: its deadline is the exact action-divergence
+            # filter already enforced by minimum_scenario_certificate above.
             fallback = self._deadline_plan(
                 belief, position, goal, optimistic_path, requester_id,
+                enforce_deadline=commitment_gate,
+                record_commitment_gate=True,
             )
             union = tuple(dict.fromkeys(certificate.cells + fallback.cells))
             certificate = ScenarioCertificate(
@@ -1292,6 +1444,85 @@ class PSRClosedLoopRunner:
             max_cells=self._task_aware_query_cap(),
         )
         self._task_aware_cpu_seconds += process_time() - started
+        self._task_aware_checks += 1
+        self._task_aware_candidate_cells += len(plan.candidate_cells)
+        self._task_aware_query_cells += len(plan.cells)
+        return plan
+
+    def _external_task_aware_plan(
+        self, method: str, belief: BeliefMap, position: Coordinate,
+        goal: Coordinate, optimistic_path: tuple[Coordinate, ...], *,
+        requester_id: int,
+    ) -> TaskAwareRepairPlan:
+        """Run a declared codec-matched adaptation of a closest-work idea.
+
+        These controls share CARE's receiver-local replica, exact-cell
+        query/patch codec, budgets, and loss trace.  They are deliberately
+        labelled adaptations because the source methods use different map and
+        message representations.
+        """
+        del requester_id  # retained in the interface for planner symmetry
+        started = process_time()
+        cap = self._task_aware_query_cap()
+        if method == "pgsc":
+            plan = path_guided_compression_plan(
+                belief, optimistic_path,
+                max_horizon=self.config.corridor_horizon,
+                max_cells=cap, sigma=self.config.path_weighted_sigma,
+                candidate_multiplier=self.config.external_candidate_multiplier,
+            )
+        elif method == "brd":
+            plan = rate_distortion_compression_plan(
+                belief, optimistic_path,
+                max_horizon=self.config.corridor_horizon,
+                max_cells=cap, sigma=self.config.path_weighted_sigma,
+            )
+        elif method in {"ocbc_fs", "voi"}:
+            uncapped = decision_candidate_cells(
+                belief, optimistic_path,
+                max_horizon=self.config.corridor_horizon,
+                max_candidates=None,
+            )
+            candidates = uncapped[:cap * self.config.external_candidate_multiplier]
+            base_map = self.adapter.to_planning_map(belief)
+            scenario_planner = make_planner("astar")
+            blocked_paths: dict[Coordinate, tuple[Coordinate, ...]] = {}
+            for cell in candidates:
+                blocked_map = base_map.copy()
+                blocked_map[cell] = 1
+                blocked_paths[cell] = scenario_planner.plan(
+                    blocked_map, position, goal,
+                ).path[:self.config.corridor_horizon + 1]
+                self._closest_work_planning_calls += 1
+            bounded_path = optimistic_path[:self.config.corridor_horizon + 1]
+            if method == "ocbc_fs":
+                seed_material = (
+                    f"{self.config.algorithm_seed}|{position}|{goal}|{candidates}|"
+                    f"{belief_stamp(belief, position)}"
+                ).encode("utf-8")
+                simulation_seed = int.from_bytes(sha256(seed_material).digest()[:8], "big")
+                plan = ocbc_forward_simulation_plan(
+                    candidates, bounded_path, blocked_paths,
+                    max_horizon=self.config.corridor_horizon,
+                    max_cells=cap, samples=self.config.ocbc_samples,
+                    seed=simulation_seed,
+                )
+                self._closest_work_simulation_samples += self.config.ocbc_samples
+            else:
+                plan = voi_per_byte_plan(
+                    candidates, bounded_path, blocked_paths,
+                    max_horizon=self.config.corridor_horizon,
+                    max_cells=cap,
+                )
+            plan = TaskAwareRepairPlan(
+                plan.cells, uncapped, plan.sensitive_cells,
+                plan.infeasible_cells,
+            )
+        else:
+            raise ValueError(f"unsupported closest-work adaptation: {method}")
+        elapsed = process_time() - started
+        self._task_aware_cpu_seconds += elapsed
+        self._planning_cpu_seconds += elapsed
         self._task_aware_checks += 1
         self._task_aware_candidate_cells += len(plan.candidate_cells)
         self._task_aware_query_cells += len(plan.cells)

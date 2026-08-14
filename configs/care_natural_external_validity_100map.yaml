@@ -1,0 +1,39 @@
+instance_family: natural_critical_random
+seed_count: 100
+map_size: 48
+obstacle_densities: [0.20]
+num_agents: 8
+observation_radius: 2
+max_episode_steps: 64
+natural_max_raw_attempts: 128
+natural_candidate_draws_per_attempt: 40000
+data_bytes_per_agent_per_step: 4459
+control_bytes_per_agent_per_step: 512
+max_digest_peers: 1
+repair_interval_steps: 1
+sync_interval_steps: 4
+corridor_horizon: 8
+corridor_radius: 1
+certificate_max_cells: 8
+certificate_uncertainty_order: 2
+digest_base_bytes: 16
+digest_entry_bytes: 6
+replica_digest_bytes: 16
+path_weighted_sigma: 1.0
+ack_bytes: 8
+patch_base_bytes: 4
+loss_probabilities: [0.30]
+delay_steps: [0]
+planners: [astar, dstar_lite]
+policies:
+  - no_communication
+  - one_shot_delta
+  - retry_all_arq
+  - periodic_full_sync
+  - path_aware_top_k_repair
+  - single_cell_sensitivity_repair
+  - deadline_aware_repair
+  - certificate_repair
+link_seed: 20260808
+workers: 32
+output_directory: outputs/care_natural_external_validity_100map

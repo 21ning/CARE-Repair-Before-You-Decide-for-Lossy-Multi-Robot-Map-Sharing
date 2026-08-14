@@ -56,7 +56,8 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
     for radius in (1, 2, 3):
         for planner in ("astar", "dstar_lite"):
             for policy in ORDER:
-                csr = lookup[(radius, planner, policy, "completion_success_rate")]
+                csr = lookup[(radius, planner, policy, "seeker_success_rate")]
+                overall = lookup[(radius, planner, policy, "completion_success_rate")]
                 episode_length = lookup[(radius, planner, policy, "episode_length")]
                 traffic = lookup[(radius, planner, policy, "attempted_bytes")]
                 replica_error = lookup[(radius, planner, policy, "mean_replica_error")]
@@ -64,9 +65,11 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
                     "fov": f"{2 * radius + 1}x{2 * radius + 1}",
                     "planner": "A*" if planner == "astar" else "D* Lite",
                     "strategy": LABELS[policy],
-                    "csr_mean": f'{float(csr["mean"]):.4f}',
-                    "csr_std": f'{float(csr["std"]):.4f}',
-                    "csr_ci95": interval(csr, 4),
+                    "seeker_csr_mean": f'{float(csr["mean"]):.4f}',
+                    "seeker_csr_std": f'{float(csr["std"]):.4f}',
+                    "seeker_csr_ci95": interval(csr, 4),
+                    "overall_completion_mean": f'{float(overall["mean"]):.4f}',
+                    "overall_completion_ci95": interval(overall, 4),
                     "el_mean": f'{float(episode_length["mean"]):.2f}',
                     "el_std": f'{float(episode_length["std"]):.2f}',
                     "el_ci95": interval(episode_length, 2),
@@ -78,15 +81,16 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
     write_csv(table_directory / "care_information_spectrum.csv", rows)
     lines = [
         "# Information-sharing spectrum", "",
-        "Continuous Full Sync performs a budget-bounded full-replica synchronization every step (K=1). All strategies use the same lossy link and 100 matched maps.",
+        "Continuous Full Sync performs a budget-bounded full-replica synchronization every step (K=1). All strategies use the same lossy link and 100 matched structured maps. Seeker CSR is exactly derived from the audited observer/seeker pairing; overall completion is diagnostic only.",
         "",
-        "| FOV | Planner | Strategy | CSR mean ± SD [95% CI] | EL mean ± SD [95% CI] | Attempted KB mean ± SD [95% CI] | Replica error |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: |",
+        "| FOV | Planner | Strategy | Derived seeker CSR mean ± SD [95% CI] | Overall completion diagnostic [95% CI] | EL mean ± SD [95% CI] | Attempted KB mean ± SD [95% CI] | Replica error |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
             f'| {row["fov"]} | {row["planner"]} | {row["strategy"]} | '
-            f'{row["csr_mean"]} ± {row["csr_std"]} {row["csr_ci95"]} | '
+            f'{row["seeker_csr_mean"]} ± {row["seeker_csr_std"]} {row["seeker_csr_ci95"]} | '
+            f'{row["overall_completion_mean"]} {row["overall_completion_ci95"]} | '
             f'{row["el_mean"]} ± {row["el_std"]} {row["el_ci95"]} | '
             f'{row["attempted_kb_mean"]} ± {row["attempted_kb_std"]} '
             f'{row["attempted_kb_ci95"]} | {row["mean_replica_error"]} |'
@@ -104,7 +108,7 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
         for planner in ("astar", "dstar_lite"):
             for left, right in comparisons:
                 csr = paired_lookup[(
-                    radius, planner, left, right, "completion_success_rate",
+                    radius, planner, left, right, "seeker_success_rate",
                 )]
                 episode_length = paired_lookup[(
                     radius, planner, left, right, "episode_length",
@@ -116,8 +120,8 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
                     "fov": f"{2 * radius + 1}x{2 * radius + 1}",
                     "planner": "A*" if planner == "astar" else "D* Lite",
                     "comparison": f"{LABELS[left]} - {LABELS[right]}",
-                    "csr_difference": f'{float(csr["mean_difference"]):+.4f}',
-                    "csr_ci95": (
+                    "seeker_csr_difference": f'{float(csr["mean_difference"]):+.4f}',
+                    "seeker_csr_ci95": (
                         f'[{float(csr["ci95_low"]):+.4f}, '
                         f'{float(csr["ci95_high"]):+.4f}]'
                     ),
@@ -138,15 +142,15 @@ def artifacts(analysis_directory: Path, table_directory: Path) -> None:
     write_csv(table_directory / "care_information_spectrum_paired.csv", effects)
     lines = [
         "# Paired information-spectrum comparisons", "",
-        "Positive ΔCSR favors the left strategy; negative ΔEL means shorter episodes.",
+        "Positive Δ derived seeker CSR favors the left strategy; negative ΔEL means shorter episodes.",
         "",
-        "| FOV | Planner | Comparison | ΔCSR [95% CI] | paired d_z | ΔEL [95% CI] | ΔKB [95% CI] |",
+        "| FOV | Planner | Comparison | Δ derived seeker CSR [95% CI] | paired d_z | ΔEL [95% CI] | ΔKB [95% CI] |",
         "| --- | --- | --- | ---: | ---: | ---: | ---: |",
     ]
     for row in effects:
         lines.append(
             f'| {row["fov"]} | {row["planner"]} | {row["comparison"]} | '
-            f'{row["csr_difference"]} {row["csr_ci95"]} | {row["paired_dz"]} | '
+            f'{row["seeker_csr_difference"]} {row["seeker_csr_ci95"]} | {row["paired_dz"]} | '
             f'{row["el_difference"]} {row["el_ci95"]} | '
             f'{row["traffic_difference_kb"]} {row["traffic_ci95_kb"]} |'
         )

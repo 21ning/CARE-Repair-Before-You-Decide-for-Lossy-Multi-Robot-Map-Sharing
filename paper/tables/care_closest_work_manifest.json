@@ -1,0 +1,33 @@
+{
+  "complete": true,
+  "episodes": 6000,
+  "workers": 32,
+  "independent_maps_per_condition": 100,
+  "primary_endpoint": "seeker_success_rate",
+  "secondary_endpoint": "critical_pair_success_rate",
+  "fovs": [
+    "3x3",
+    "5x5",
+    "7x7"
+  ],
+  "planners": [
+    "astar",
+    "dstar_lite"
+  ],
+  "policies": [
+    "one_shot_delta",
+    "retry_all_arq",
+    "path_aware_top_k_repair",
+    "single_cell_sensitivity_repair",
+    "deadline_aware_repair",
+    "ocbc_forward_simulation",
+    "path_guided_compression",
+    "rate_distortion_compression",
+    "voi_repair",
+    "certificate_repair"
+  ],
+  "loss_probability": 0.3,
+  "delay_steps": 0,
+  "comparison_scope": "codec-matched adaptations, not exact reproductions of source systems; all use the same explicit binary map, query-patch codec, 64-byte query cap, link trace, planner and byte accounting",
+  "confidence_interval": "20000-draw paired map-cluster bootstrap"
+}

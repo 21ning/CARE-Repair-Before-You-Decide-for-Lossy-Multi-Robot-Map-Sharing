@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import csv
+import json
 
+import pytest
+
+import scripts.run_psr_suite as psr_suite_module
 from scripts.run_psr_suite import run_suite
 
 
@@ -21,6 +25,14 @@ def test_psr_suite_persists_matched_rows_and_traces(tmp_path) -> None:
     assert summary["rows"] == 4
     assert len(rows) == 4
     assert {row["policy"] for row in rows} == {"one_shot_delta", "utility_triggered_repair"}
+    assert all(row["completed_mask"] for row in rows)
+    assert all(row["seeker_success_rate"] for row in rows)
+    assert all(row["observer_success_rate"] for row in rows)
+    assert all(row["critical_pair_success_rate"] for row in rows)
+    assert all(json.loads(row["completion_steps"]) for row in rows)
+    assert all(json.loads(row["observer_ids"]) == [] for row in rows)
+    assert all(json.loads(row["seeker_ids"]) == [] for row in rows)
+    assert all(json.loads(row["critical_pairs"]) == [] for row in rows)
     assert all(row["instance_fingerprint"] == rows[0]["instance_fingerprint"] for row in rows)
     assert (tmp_path / "traces.csv").is_file()
     assert len(tuple((tmp_path / "instances").glob("*.json"))) == 1
@@ -152,3 +164,35 @@ def test_psr_suite_crosses_independent_layout_and_network_seeds(tmp_path) -> Non
     assert {(row["topology_family"], row["map_size"], row["num_agents"]) for row in rows} == {
         ("fork_bottleneck_upper_block", "16", "2")
     }
+
+
+def test_natural_manifest_is_frozen_before_policy_execution(
+    tmp_path, monkeypatch,
+) -> None:
+    config = {
+        "instance_family": "natural_critical_random",
+        "seeds": [0], "map_size": 24, "obstacle_densities": [.2],
+        "num_agents": 2, "observation_radius": 2, "max_episode_steps": 64,
+        "natural_candidate_draws_per_attempt": 40_000,
+        "data_bytes_per_agent_per_step": 676,
+        "control_bytes_per_agent_per_step": 512,
+        "repair_interval_steps": 1, "sync_interval_steps": 4,
+        "corridor_horizon": 8, "corridor_radius": 1,
+        "digest_base_bytes": 16, "digest_entry_bytes": 6,
+        "ack_bytes": 8, "patch_base_bytes": 4,
+        "loss_probabilities": [.3], "delay_steps": [0],
+        "policies": ["one_shot_delta"], "link_seed": 7, "workers": 1,
+    }
+
+    def fail_before_episode(_task):
+        raise RuntimeError("intentional pre-episode failure")
+
+    monkeypatch.setattr(psr_suite_module, "_run_policy_task", fail_before_episode)
+    with pytest.raises(RuntimeError, match="pre-episode failure"):
+        psr_suite_module.run_suite(config, tmp_path)
+
+    manifest = json.loads((tmp_path / "accepted_layout_manifest.json").read_text())
+    assert manifest["selection_precedes_all_policy_execution"] is True
+    assert manifest["selection_uses_policy_or_link_outcomes"] is False
+    assert len(manifest["records"]) == 1
+    assert not (tmp_path / "summary.json").exists()

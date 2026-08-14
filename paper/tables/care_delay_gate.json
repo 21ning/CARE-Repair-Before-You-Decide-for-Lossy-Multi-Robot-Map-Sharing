@@ -8,35 +8,38 @@
     ],
     "traffic": "paired 95% CI upper bound <= 0",
     "one_shot": "paired CSR 95% CI lower bound > 0",
-    "episode_cpu_ratio": "<= 3x current CARE"
+    "episode_cpu_ratio": "<= 3x CARE-Lite"
   },
+  "comparator": "CARE-Lite (deadline_aware_repair)",
   "planners": [
     {
       "planner": "astar",
-      "noninferior_to_care": true,
-      "noninferior_to_care_at_delay1": true,
-      "traffic_no_higher_than_care": true,
+      "noninferior_to_care_lite": false,
+      "noninferior_to_care_lite_at_delay1": true,
+      "traffic_no_higher_than_care_lite": true,
       "improves_over_one_shot": true,
-      "episode_cpu_ratio_vs_care": 3.9871066244738094,
+      "episode_cpu_ratio_vs_care_lite": 3.9644089445514026,
       "cpu_ratio_below_3": false,
-      "csr_vs_care": -0.00375,
-      "csr_vs_care_at_delay1": -0.00375,
-      "bytes_vs_care": -3743.03,
+      "csr_vs_care_lite": -0.0075,
+      "csr_vs_care_lite_at_delay1": -0.0025,
+      "bytes_vs_care_lite": -3743.03,
       "pass": false
     },
     {
       "planner": "dstar_lite",
-      "noninferior_to_care": true,
-      "noninferior_to_care_at_delay1": true,
-      "traffic_no_higher_than_care": true,
+      "noninferior_to_care_lite": false,
+      "noninferior_to_care_lite_at_delay1": false,
+      "traffic_no_higher_than_care_lite": true,
       "improves_over_one_shot": true,
-      "episode_cpu_ratio_vs_care": 3.086399596270228,
-      "cpu_ratio_below_3": false,
-      "csr_vs_care": -0.0025,
-      "csr_vs_care_at_delay1": -0.00625,
-      "bytes_vs_care": -3807.42,
+      "episode_cpu_ratio_vs_care_lite": 2.9917071035969096,
+      "cpu_ratio_below_3": true,
+      "csr_vs_care_lite": -0.005,
+      "csr_vs_care_lite_at_delay1": -0.01,
+      "bytes_vs_care_lite": -3807.42,
       "pass": false
     }
   ],
-  "promote_certificate_care": false
+  "promote_certificate_as_care": false,
+  "primary_reliability_endpoint": "seeker CSR",
+  "role_metric_provenance": "Direct seeker_success_rate serialized by the role-aware runner."
 }

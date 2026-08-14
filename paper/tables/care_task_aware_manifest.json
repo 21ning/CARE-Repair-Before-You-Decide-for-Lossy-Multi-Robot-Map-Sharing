@@ -27,5 +27,7 @@
   "loss_probability": 0.3,
   "delay_steps": 0,
   "query_contract": "same 8-cell/64-byte maximum query, query-patch codec, peer schedule, loss trace and byte accounting for Path-Aware, Single-Cell and CARE",
-  "confidence_interval": "20000-draw map-cluster bootstrap; paired differences preserve map and deterministic loss trace"
+  "confidence_interval": "20000-draw map-cluster bootstrap; paired differences preserve map and deterministic loss trace",
+  "primary_reliability_endpoint": "derived seeker CSR",
+  "role_metric_provenance": "Legacy structured rows omit role fields. Seeker CSR is derived exactly as 2*overall_completion_rate-1 after auditing that all paired observers succeed; the identity is never used for random-map controls."
 }

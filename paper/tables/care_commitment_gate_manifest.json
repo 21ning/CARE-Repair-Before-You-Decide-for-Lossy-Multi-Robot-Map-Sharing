@@ -1,0 +1,31 @@
+{
+  "complete": true,
+  "episodes": 1600,
+  "workers": 32,
+  "independent_maps_per_condition": 100,
+  "unique_physical_layouts": 100,
+  "fov": "5x5",
+  "loss_probability": 0.3,
+  "delays": [
+    0,
+    1,
+    2,
+    4
+  ],
+  "planners": [
+    "astar",
+    "dstar_lite"
+  ],
+  "policies": [
+    "certificate_repair_route_gate",
+    "certificate_repair_no_commitment_gate"
+  ],
+  "primary_endpoints": [
+    "seeker_success_rate",
+    "critical_pair_success_rate"
+  ],
+  "comparison": "RouteWitness-Gated minus RouteWitness-Ungated; neither variant is final CARE",
+  "confidence_interval": "20000-draw map-cluster bootstrap; paired differences preserve map and deterministic loss trace",
+  "seeker_noninferiority_margin": -0.02,
+  "delay_zero_negative_control": "all non-CPU-timing fields exactly equal"
+}

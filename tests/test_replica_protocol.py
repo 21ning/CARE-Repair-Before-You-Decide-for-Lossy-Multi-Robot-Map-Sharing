@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from inspect import signature
+
 from cmvr.communication import (
+    ReplicaPolicy, bernoulli_local_decoder_probabilities,
+    bernoulli_rate_distortion_plan,
     deadline_decision_repair_plan, decision_candidate_cells, first_path_divergence, full_replica_chunk,
-    minimum_scenario_certificate, ordered_digest_peers, planning_corridor,
+    minimum_scenario_certificate, ocbc_forward_simulation_plan,
+    ordered_digest_peers, path_guided_spatial_coverage_plan, planning_corridor,
     path_aware_top_k_plan, replica_digest, scenario_blocked_sets,
-    single_cell_sensitivity_plan,
+    single_cell_sensitivity_plan, voi_per_byte_plan,
 )
 from cmvr.mapping import BeliefMap, MapUpdate
 
@@ -42,6 +47,15 @@ def test_deadline_plan_suppresses_repairs_that_cannot_arrive_in_time() -> None:
     assert plan.ambiguous and not plan.feasible
     assert plan.decision_slack_steps == 0
     assert plan.cells == ()
+
+    ungated = deadline_decision_repair_plan(
+        belief, ((2, 1), (2, 2), (2, 3)), ((2, 1), (1, 1), (1, 2)),
+        round_trip_steps=2, max_horizon=8, max_cells=12,
+        enforce_deadline=False,
+    )
+    assert ungated.ambiguous and not ungated.feasible
+    assert ungated.decision_slack_steps == plan.decision_slack_steps
+    assert ungated.cells
 
 
 def test_scenario_certificate_is_the_exact_minimum_hitting_set() -> None:
@@ -110,6 +124,127 @@ def test_path_aware_top_k_uses_earliest_path_influence_without_replanning() -> N
     assert plan.cells == plan.candidate_cells[:3]
     assert plan.cells[0] == (3, 2)
     assert plan.sensitive_cells == 0
+
+
+def test_pgsc_is_deterministic_budgeted_and_not_path_proximity_top_k() -> None:
+    belief = BeliefMap((7, 7))
+    path = ((3, 1), (3, 2), (3, 3), (3, 4), (3, 5))
+    pgsc = path_guided_spatial_coverage_plan(
+        belief, path, max_horizon=4, max_cells=4, sigma=1.0,
+    )
+    repeated = path_guided_spatial_coverage_plan(
+        belief, path, max_horizon=4, max_cells=4, sigma=1.0,
+    )
+    top_k = path_aware_top_k_plan(
+        belief, path, max_horizon=4, max_cells=4,
+    )
+
+    assert pgsc == repeated
+    assert len(pgsc.cells) == 4 == len(set(pgsc.cells))
+    assert len(pgsc.candidate_cells) <= 2 * len(pgsc.cells)
+    assert set(pgsc.cells) <= set(pgsc.candidate_cells)
+    assert pgsc.cells != top_k.cells
+    assert path_guided_spatial_coverage_plan(
+        belief, path, max_horizon=4, max_cells=0, sigma=1.0,
+    ).cells == ()
+    assert ReplicaPolicy.PGSC_REPAIR is ReplicaPolicy.PATH_GUIDED_COMPRESSION
+
+
+def test_brd_uses_only_local_decoder_uncertainty_and_differs_from_pgsc() -> None:
+    belief = BeliefMap((7, 7))
+    for x, y, state in (
+        (2, 2, 1), (2, 3, 0), (4, 4, 1), (4, 5, 1), (3, 0, 0),
+    ):
+        belief.apply_update(MapUpdate.create(
+            sender_id=0, x=x, y=y, cell_state=state,
+            version=1, observed_at=0,
+        ))
+    path = ((3, 1), (3, 2), (3, 3), (3, 4), (3, 5))
+    probabilities = bernoulli_local_decoder_probabilities(
+        belief, ((3, 2), (3, 4), (0, 0)), sigma=1.0,
+    )
+    brd = bernoulli_rate_distortion_plan(
+        belief, path, max_horizon=4, max_cells=4, sigma=1.0,
+    )
+    pgsc = path_guided_spatial_coverage_plan(
+        belief, path, max_horizon=4, max_cells=4, sigma=1.0,
+    )
+
+    assert all(0.0 < probability < 1.0 for probability in probabilities.values())
+    assert probabilities[(3, 4)] > probabilities[(0, 0)]
+    assert len(brd.cells) == 4
+    assert brd.cells != pgsc.cells
+    assert brd == bernoulli_rate_distortion_plan(
+        belief, path, max_horizon=4, max_cells=4, sigma=1.0,
+    )
+    assert ReplicaPolicy.BRD_REPAIR is ReplicaPolicy.RATE_DISTORTION_COMPRESSION
+
+
+def test_ocbc_fs_is_seeded_budgeted_and_accepts_only_explicit_priors() -> None:
+    candidates = ((3, 2), (3, 3), (3, 4))
+    optimistic = ((3, 1), (3, 2), (3, 3), (3, 4), (3, 5))
+    blocked_paths = {
+        candidates[0]: ((3, 1), (2, 1), (2, 2), (2, 3), (2, 4)),
+        candidates[1]: ((3, 1), (3, 2), (2, 2), (2, 3), (2, 4)),
+        candidates[2]: ((3, 1), (3, 2), (3, 3), (2, 3), (2, 4)),
+    }
+    arguments = dict(
+        max_horizon=4, max_cells=2, samples=512, seed=19,
+        blocked_probabilities={
+            candidates[0]: .9, candidates[1]: .5, candidates[2]: .1,
+        },
+    )
+    first = ocbc_forward_simulation_plan(
+        candidates, optimistic, blocked_paths, **arguments,
+    )
+    second = ocbc_forward_simulation_plan(
+        candidates, optimistic, blocked_paths, **arguments,
+    )
+
+    assert first == second
+    assert 0 < len(first.cells) <= 2
+    assert first.cells[0] == candidates[0]
+    assert set(first.cells) <= set(candidates)
+    assert ReplicaPolicy.OCBC_FS_REPAIR is ReplicaPolicy.OCBC_FORWARD_SIMULATION
+
+
+def test_voi_per_byte_is_deterministic_bounded_and_uses_actual_entry_costs() -> None:
+    candidates = ((3, 2), (3, 3), (3, 4))
+    optimistic = ((3, 1), (3, 2), (3, 3), (3, 4), (3, 5))
+    blocked_paths = {
+        candidates[0]: ((3, 1), (2, 1), (2, 2), (2, 3), (2, 4)),
+        candidates[1]: ((3, 1), (3, 2), (2, 2), (2, 3), (2, 4)),
+        candidates[2]: ((3, 1), (3, 2), (3, 3), (2, 3), (2, 4)),
+    }
+    priors = {candidates[0]: .2, candidates[1]: .4, candidates[2]: .8}
+    first = voi_per_byte_plan(
+        candidates, optimistic, blocked_paths,
+        max_horizon=4, max_cells=2, blocked_probabilities=priors,
+        query_entry_bytes=6, patch_entry_bytes=13,
+    )
+    second = voi_per_byte_plan(
+        candidates, optimistic, blocked_paths,
+        max_horizon=4, max_cells=2, blocked_probabilities=priors,
+        query_entry_bytes=12, patch_entry_bytes=26,
+    )
+
+    # Multiplying every marginal cell cost by the same factor preserves the
+    # ordering while still making the charged cost an explicit API input.
+    assert first == second
+    assert 0 < len(first.cells) <= 2
+    assert first.cells[0] == candidates[2]
+    assert ReplicaPolicy.VOI_PER_BYTE_REPAIR is ReplicaPolicy.VOI_REPAIR
+
+
+def test_closest_work_selector_apis_cannot_receive_truth_or_peer_replicas() -> None:
+    forbidden = {"true_map", "truth", "peer_belief", "peer_replica"}
+    for selector in (
+        path_guided_spatial_coverage_plan,
+        bernoulli_rate_distortion_plan,
+        ocbc_forward_simulation_plan,
+        voi_per_byte_plan,
+    ):
+        assert forbidden.isdisjoint(signature(selector).parameters)
 
 
 def test_single_cell_sensitivity_ranks_actions_and_enforces_deadline() -> None:

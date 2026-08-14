@@ -4,5 +4,8 @@
   "episodes": 12000,
   "independent_maps_per_condition": 100,
   "primary_fov": "5x5",
-  "confidence_interval": "20,000-draw map-cluster bootstrap; all comparisons paired by layout and loss trace"
+  "confidence_interval": "20,000-draw map-cluster bootstrap; all comparisons paired by layout and loss trace",
+  "primary_reliability_endpoint": "derived seeker CSR for audited structured studies; overall completion rate only for random-map negative controls",
+  "role_metric_provenance": "Legacy structured rows omit role fields. Seeker CSR is derived exactly as 2*overall_completion_rate-1 after auditing that all paired observers succeed; the identity is never used for random-map controls.",
+  "scale_design": "legacy tiled-cluttered-fork stress test (not independent natural scale)"
 }

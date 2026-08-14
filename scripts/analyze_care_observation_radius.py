@@ -11,6 +11,16 @@ from pathlib import Path
 
 import numpy as np
 
+try:
+    from bootstrap_ci import bootstrap_mean_ci, bootstrap_ratio_ci
+except ModuleNotFoundError:
+    from scripts.bootstrap_ci import bootstrap_mean_ci, bootstrap_ratio_ci
+
+try:
+    from structured_role_metrics import ROLE_PROVENANCE, metric_value
+except ModuleNotFoundError:  # Imported as ``scripts.analyze_*`` in tests.
+    from scripts.structured_role_metrics import ROLE_PROVENANCE, metric_value
+
 
 RADII = (1, 2, 3)
 PLANNERS = ("astar", "dstar_lite")
@@ -21,7 +31,7 @@ POLICIES = (
     "utility_triggered_repair", "deadline_aware_repair", "certificate_repair",
 )
 METRICS = (
-    "completion_success_rate", "instance_success_rate", "episode_length",
+    "seeker_success_rate", "completion_success_rate", "instance_success_rate", "episode_length",
     "attempted_bytes", "attempted_control_bytes", "attempted_repair_bytes",
     "mean_replica_error", "mean_path_repairable_error", "mean_path_truth_error",
     "planning_cpu_ms", "utility_trigger_cpu_ms", "certificate_cpu_ms",
@@ -39,18 +49,13 @@ EVENT_METRICS = (
 
 
 def bootstrap_mean(values: np.ndarray, seed: int) -> tuple[float, float]:
-    rng = np.random.default_rng(seed)
-    means = rng.choice(values, (20_000, len(values)), replace=True).mean(axis=1)
-    return tuple(float(value) for value in np.quantile(means, (.025, .975)))
+    del seed
+    return bootstrap_mean_ci(values)
 
 
 def bootstrap_ratio(numerators: np.ndarray, denominators: np.ndarray, seed: int) -> tuple[float, float]:
-    rng = np.random.default_rng(seed)
-    indices = rng.integers(0, len(numerators), size=(20_000, len(numerators)))
-    numerator = numerators[indices].sum(axis=1)
-    denominator = denominators[indices].sum(axis=1)
-    ratios = np.divide(numerator, denominator, out=np.full_like(numerator, np.nan), where=denominator > 0)
-    return tuple(float(value) for value in np.nanquantile(ratios, (.025, .975)))
+    del seed
+    return bootstrap_ratio_ci(numerators, denominators)
 
 
 def write_csv(path: Path, rows: list[dict]) -> None:
@@ -99,8 +104,10 @@ def analyze(input_directory: Path, output_directory: Path) -> dict:
         radius, planner, policy = condition
         for metric_index, metric in enumerate(METRICS):
             values = np.asarray([
-                float(groups[condition][key][metric])
-                for key in ordered_keys if groups[condition][key][metric] != ""
+                metric_value(groups[condition][key], metric)
+                for key in ordered_keys
+                if metric == "seeker_success_rate"
+                or groups[condition][key].get(metric, "") != ""
             ])
             if not len(values):
                 continue
@@ -159,9 +166,17 @@ def analyze(input_directory: Path, output_directory: Path) -> dict:
             care = groups[(radius, planner, "certificate_repair")]
             for comparator in POLICIES[:-1]:
                 other = groups[(radius, planner, comparator)]
-                for metric_index, metric in enumerate(METRICS[:13]):
+                for metric_index, metric in enumerate((
+                    "seeker_success_rate", "completion_success_rate",
+                    "instance_success_rate", "episode_length", "attempted_bytes",
+                    "attempted_control_bytes", "attempted_repair_bytes",
+                    "mean_replica_error", "mean_path_repairable_error",
+                    "mean_path_truth_error", "planning_cpu_ms",
+                    "utility_trigger_cpu_ms", "certificate_cpu_ms",
+                )):
                     differences = np.asarray([
-                        float(care[key][metric]) - float(other[key][metric]) for key in ordered_keys
+                        metric_value(care[key], metric) - metric_value(other[key], metric)
+                        for key in ordered_keys
                     ])
                     low, high = bootstrap_mean(differences, 300_000 + comparison_index * 100 + metric_index)
                     std = float(differences.std(ddof=1))
@@ -177,11 +192,11 @@ def analyze(input_directory: Path, output_directory: Path) -> dict:
 
     interactions = []
     for planner_index, planner in enumerate(PLANNERS):
-        for metric_index, metric in enumerate(("completion_success_rate", "attempted_bytes")):
+        for metric_index, metric in enumerate(("seeker_success_rate", "attempted_bytes")):
             gains = {
                 radius: np.asarray([
-                    float(groups[(radius, planner, "certificate_repair")][key][metric])
-                    - float(groups[(radius, planner, "one_shot_delta")][key][metric])
+                    metric_value(groups[(radius, planner, "certificate_repair")][key], metric)
+                    - metric_value(groups[(radius, planner, "one_shot_delta")][key], metric)
                     for key in ordered_keys
                 ]) for radius in RADII
             }
@@ -207,6 +222,8 @@ def analyze(input_directory: Path, output_directory: Path) -> dict:
         "planners": list(PLANNERS), "policies": list(POLICIES),
         "matching": "layout fingerprint and network seed held fixed across observation radii and policies",
         "confidence_interval": "20,000-draw map-cluster bootstrap; paired differences preserve layout and loss trace",
+        "primary_reliability_endpoint": "derived seeker CSR",
+        "role_metric_provenance": ROLE_PROVENANCE,
     }
     (output_directory / "analysis_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return manifest

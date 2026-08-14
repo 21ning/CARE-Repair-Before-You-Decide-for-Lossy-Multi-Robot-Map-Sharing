@@ -22,7 +22,8 @@ from cmvr.env import (
     PSRClosedLoopRunner, PSRConfig, ReplicaPolicy, generate_fork_bottleneck_instance, generate_multifork_bottleneck_instance,
     generate_rotated_multifork_bottleneck_instance, generate_multifork_topology_variant_instance,
     generate_cluttered_multifork_instance, generate_tiled_cluttered_fork_instance,
-    generate_instance, save_instance,
+    generate_natural_critical_instance,
+    generate_instance, load_instance, save_instance,
 )
 from cmvr.utils.config import ExperimentConfig
 
@@ -31,7 +32,12 @@ RESULT_FIELDS = [
     "seed", "topology_family", "map_size", "num_agents", "observation_radius",
     "layout_seed", "network_seed", "instance_fingerprint", "layout_fingerprint",
     "density", "loss_probability", "delay_steps", "planner", "policy",
-    "episode_length", "completion_success_rate", "instance_success_rate",
+    "episode_length", "completion_success_rate", "observer_success_rate",
+    "seeker_success_rate", "critical_pair_success_rate",
+    "all_seekers_success", "instance_success_rate", "completed_mask",
+    "observer_ids", "seeker_ids", "critical_pairs", "completion_steps",
+    "mean_seeker_completion_step", "mean_observer_completion_step",
+    "mean_seeker_completion_step_censored",
     "mean_replica_error", "mean_path_repairable_error", "mean_path_truth_error",
     "mean_recovery_latency", "unresolved_repair_events", "repair_events",
     "attempted_messages", "attempted_bytes", "lost_messages", "lost_bytes",
@@ -50,12 +56,15 @@ RESULT_FIELDS = [
     "certificate_query_cells", "certificate_candidate_cap_checks",
     "certificate_candidate_cap_hits", "certificate_candidate_cap_hit_rate",
     "mean_uncapped_certificate_candidates",
+    "commitment_gate_checks", "commitment_gate_closed",
+    "commitment_raw_query_cells", "commitment_suppressed_query_cells",
     "critical_pair_count", "critical_peer_observation_events",
     "critical_self_observation_events", "critical_route_commitment_events",
     "mean_critical_peer_observation_step", "mean_critical_self_observation_step",
     "mean_route_commitment_step", "mean_visibility_gap_steps",
     "mean_usable_communication_window_steps", "decision_before_self_observation_rate",
     "task_aware_checks", "task_aware_candidate_cells", "task_aware_query_cells",
+    "closest_work_planning_calls", "closest_work_simulation_samples",
     "single_cell_planning_calls", "single_cell_sensitive_cells",
     "single_cell_infeasible_cells", "task_aware_cpu_ms",
     "scuttle_digest_exchanges", "scuttle_patch_updates",
@@ -112,17 +121,21 @@ def runner_config(config: dict, *, seed: int, density: float, loss: float, delay
         iblt_partitions=int(config.get("iblt_partitions", 16)),
         merkle_fanout=int(config.get("merkle_fanout", 16)),
         merkle_session_steps=int(config.get("merkle_session_steps", 4)),
+        external_candidate_multiplier=int(config.get("external_candidate_multiplier", 2)),
+        ocbc_samples=int(config.get("ocbc_samples", 128)),
+        algorithm_seed=int(config.get("algorithm_seed", 20260813)),
         link=link,
     )
 
 
-def _run_policy_task(task: tuple[dict, float, int, int, int, int, float, int, str, str]) -> tuple[dict, list[dict]]:
+def _run_policy_task(task: tuple[dict, float, int, int, int, int, float, int, str, str, str]) -> tuple[dict, list[dict]]:
     """Run one independent policy episode for deterministic process parallelism."""
-    config, density, observation_radius, trial_seed, layout_seed, network_seed, loss, delay, planner_name, policy_name = task
-    instance = _instance_for_condition(
-        config, seed=layout_seed, density=density,
-        observation_radius=observation_radius,
-    )
+    config, density, observation_radius, trial_seed, layout_seed, network_seed, loss, delay, planner_name, policy_name, instance_path = task
+    # Instances are selected/generated and frozen before any policy executes.
+    # Workers load those exact files rather than rerunning an expensive natural
+    # selector for every policy, which also makes outcome-independent selection
+    # operationally explicit.
+    instance = load_instance(instance_path)
     run_config = runner_config(config, seed=network_seed, density=density, loss=loss, delay=delay)
     result = PSRClosedLoopRunner(
         policy=ReplicaPolicy(policy_name), config=run_config, planner=planner_name,
@@ -138,7 +151,19 @@ def _run_policy_task(task: tuple[dict, float, int, int, int, int, float, int, st
         "policy": policy_name,
         "episode_length": result.episode_length,
         "completion_success_rate": result.completion_success_rate,
+        "observer_success_rate": result.observer_success_rate,
+        "seeker_success_rate": result.seeker_success_rate,
+        "critical_pair_success_rate": result.critical_pair_success_rate,
+        "all_seekers_success": int(all(result.completed[index] for index in result.seeker_ids)) if result.seeker_ids else int(all(result.completed)),
         "instance_success_rate": result.instance_success_rate,
+        "completed_mask": "".join("1" if value else "0" for value in result.completed),
+        "observer_ids": json.dumps(result.observer_ids, separators=(",", ":")),
+        "seeker_ids": json.dumps(result.seeker_ids, separators=(",", ":")),
+        "critical_pairs": json.dumps(result.critical_pairs, separators=(",", ":")),
+        "completion_steps": json.dumps(result.completion_steps, separators=(",", ":")),
+        "mean_seeker_completion_step": result.mean_seeker_completion_step,
+        "mean_observer_completion_step": result.mean_observer_completion_step,
+        "mean_seeker_completion_step_censored": result.mean_seeker_completion_step_censored,
         "mean_replica_error": result.mean_replica_error,
         "mean_path_repairable_error": result.mean_path_repairable_error,
         "mean_path_truth_error": result.mean_path_truth_error,
@@ -167,6 +192,10 @@ def _run_policy_task(task: tuple[dict, float, int, int, int, int, float, int, st
         "certificate_candidate_cap_hits": result.certificate_candidate_cap_hits,
         "certificate_candidate_cap_hit_rate": result.certificate_candidate_cap_hit_rate,
         "mean_uncapped_certificate_candidates": result.mean_uncapped_certificate_candidates,
+        "commitment_gate_checks": result.commitment_gate_checks,
+        "commitment_gate_closed": result.commitment_gate_closed,
+        "commitment_raw_query_cells": result.commitment_raw_query_cells,
+        "commitment_suppressed_query_cells": result.commitment_suppressed_query_cells,
         "critical_pair_count": result.critical_pair_count,
         "critical_peer_observation_events": result.critical_peer_observation_events,
         "critical_self_observation_events": result.critical_self_observation_events,
@@ -180,6 +209,8 @@ def _run_policy_task(task: tuple[dict, float, int, int, int, int, float, int, st
         "task_aware_checks": result.task_aware_checks,
         "task_aware_candidate_cells": result.task_aware_candidate_cells,
         "task_aware_query_cells": result.task_aware_query_cells,
+        "closest_work_planning_calls": result.closest_work_planning_calls,
+        "closest_work_simulation_samples": result.closest_work_simulation_samples,
         "single_cell_planning_calls": result.single_cell_planning_calls,
         "single_cell_sensitive_cells": result.single_cell_sensitive_cells,
         "single_cell_infeasible_cells": result.single_cell_infeasible_cells,
@@ -216,6 +247,8 @@ def run_suite(config: dict, output: Path) -> dict:
     instances = output / "instances"
     instances.mkdir()
     tasks = []
+    accepted_layouts: list[dict] = []
+    instance_paths: dict[tuple[float, int, int], str] = {}
     layout_seeds = config.get("layout_seeds")
     network_seeds = config.get("network_seeds")
     if (layout_seeds is None) != (network_seeds is None):
@@ -245,13 +278,24 @@ def run_suite(config: dict, output: Path) -> dict:
                     config, seed=layout_seed, density=float(density),
                     observation_radius=observation_radius,
                 )
-                save_instance(
+                json_path, _ = save_instance(
                     instance,
                     instances / (
                         f"density-{density_tag}_radius-{observation_radius}_layout-"
                         f"{layout_seed}_{instance.fingerprint()[:12]}.json"
                     ),
                 )
+                instance_paths[(float(density), observation_radius, layout_seed)] = str(json_path.resolve())
+                if config.get("instance_family") == "natural_critical_random":
+                    accepted_layouts.append({
+                        "layout_seed": layout_seed,
+                        "observation_radius": observation_radius,
+                        "instance_fingerprint": instance.fingerprint(),
+                        "layout_fingerprint": instance.layout_fingerprint(),
+                        "starts": [list(cell) for cell in instance.starts],
+                        "goals": [list(cell) for cell in instance.goals],
+                        "metadata": dict(instance.package_metadata),
+                    })
             for trial_seed, layout_seed, network_seed in trial_plan:
                 for loss in config["loss_probabilities"]:
                     for delay in config["delay_steps"]:
@@ -262,7 +306,18 @@ def run_suite(config: dict, output: Path) -> dict:
                                     config, float(density), observation_radius,
                                     trial_seed, layout_seed, network_seed, float(loss),
                                     int(delay), str(planner_name), str(policy_name),
+                                    instance_paths[(float(density), observation_radius, layout_seed)],
                                 ))
+    # Persist the complete accepted population before any policy worker starts.
+    # This makes the selection boundary observable on disk even if execution is
+    # interrupted, and prevents a result-dependent process from rewriting the
+    # population manifest after seeing outcomes.
+    if accepted_layouts:
+        (output / "accepted_layout_manifest.json").write_text(json.dumps({
+            "selection_precedes_all_policy_execution": True,
+            "selection_uses_policy_or_link_outcomes": False,
+            "records": accepted_layouts,
+        }, indent=2) + "\n")
     workers = int(config.get("workers", 1))
     if workers < 1:
         raise ValueError("workers must be positive")
@@ -342,6 +397,15 @@ def _instance_for_condition(
             seed=seed, obstacle_density=density, map_size=int(config["map_size"]),
             num_agents=int(config["num_agents"]), observation_radius=observation_radius,
             max_episode_steps=int(config["max_episode_steps"]),
+        )
+    if family == "natural_critical_random":
+        return generate_natural_critical_instance(
+            seed=seed, obstacle_density=density, map_size=int(config["map_size"]),
+            num_agents=int(config["num_agents"]), observation_radius=observation_radius,
+            max_episode_steps=int(config["max_episode_steps"]),
+            corridor_horizon=int(config.get("corridor_horizon", 8)),
+            max_raw_attempts=int(config.get("natural_max_raw_attempts", 128)),
+            candidate_draws_per_attempt=config.get("natural_candidate_draws_per_attempt"),
         )
     raise ValueError(f"unsupported PSR instance_family: {family}")
 

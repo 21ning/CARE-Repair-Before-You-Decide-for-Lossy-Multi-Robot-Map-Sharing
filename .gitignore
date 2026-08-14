@@ -6,3 +6,9 @@ renders/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+paper/care_icassp_draft.aux
+paper/care_icassp_draft.bbl
+paper/care_icassp_draft.blg
+paper/care_icassp_draft.log
+paper/care_icassp_draft.pdf
+paper/missfont.log

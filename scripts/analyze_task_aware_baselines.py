@@ -11,6 +11,16 @@ from pathlib import Path
 
 import numpy as np
 
+try:
+    from bootstrap_ci import bootstrap_mean_ci
+except ModuleNotFoundError:
+    from scripts.bootstrap_ci import bootstrap_mean_ci
+
+try:
+    from structured_role_metrics import ROLE_PROVENANCE, metric_value
+except ModuleNotFoundError:  # Imported as ``scripts.analyze_*`` in tests.
+    from scripts.structured_role_metrics import ROLE_PROVENANCE, metric_value
+
 
 RADII = (1, 2, 3)
 PLANNERS = ("astar", "dstar_lite")
@@ -21,7 +31,7 @@ POLICIES = (
     "certificate_repair",
 )
 METRICS = (
-    "completion_success_rate", "instance_success_rate", "episode_length",
+    "seeker_success_rate", "completion_success_rate", "instance_success_rate", "episode_length",
     "attempted_bytes", "attempted_data_bytes", "attempted_control_bytes",
     "attempted_repair_bytes", "mean_replica_error", "mean_path_truth_error",
     "task_aware_checks", "task_aware_candidate_cells", "task_aware_query_cells",
@@ -31,7 +41,7 @@ METRICS = (
     "episode_cpu_ms",
 )
 PAIRED_METRICS = (
-    "completion_success_rate", "episode_length", "attempted_bytes",
+    "seeker_success_rate", "completion_success_rate", "episode_length", "attempted_bytes",
     "attempted_control_bytes", "attempted_repair_bytes", "mean_path_truth_error",
     "episode_cpu_ms",
 )
@@ -49,10 +59,8 @@ BOOTSTRAP_DRAWS = 20_000
 
 
 def bootstrap(values: np.ndarray, seed: int) -> tuple[float, float]:
-    rng = np.random.default_rng(seed)
-    indices = rng.integers(0, len(values), (BOOTSTRAP_DRAWS, len(values)))
-    means = values[indices].mean(axis=1)
-    return tuple(float(value) for value in np.quantile(means, (.025, .975)))
+    del seed
+    return bootstrap_mean_ci(values, draws=BOOTSTRAP_DRAWS)
 
 
 def write_csv(path: Path, rows: list[dict]) -> None:
@@ -117,7 +125,7 @@ def analyze(input_directory: Path, output_directory: Path) -> None:
         radius, planner, policy = condition
         for metric_index, metric in enumerate(METRICS):
             values = np.asarray([
-                float(groups[condition][key][metric]) for key in ordered_keys
+                metric_value(groups[condition][key], metric) for key in ordered_keys
             ])
             low, high = bootstrap(values, condition_index * 100 + metric_index)
             summary.append({
@@ -139,7 +147,7 @@ def analyze(input_directory: Path, output_directory: Path) -> None:
                 right = groups[(radius, planner, right_policy)]
                 for metric_index, metric in enumerate(PAIRED_METRICS):
                     differences = np.asarray([
-                        float(left[key][metric]) - float(right[key][metric])
+                        metric_value(left[key], metric) - metric_value(right[key], metric)
                         for key in ordered_keys
                     ])
                     low, high = bootstrap(
@@ -233,6 +241,8 @@ def analyze(input_directory: Path, output_directory: Path) -> None:
             f"{BOOTSTRAP_DRAWS}-draw map-cluster bootstrap; paired differences "
             "preserve map and deterministic loss trace"
         ),
+        "primary_reliability_endpoint": "derived seeker CSR",
+        "role_metric_provenance": ROLE_PROVENANCE,
     }
     (output_directory / "analysis_manifest.json").write_text(
         json.dumps(manifest, indent=2) + "\n"

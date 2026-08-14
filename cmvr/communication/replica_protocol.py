@@ -9,11 +9,12 @@ flow.
 
 from __future__ import annotations
 
-from hashlib import sha256
-from itertools import combinations
-from math import exp
 from dataclasses import dataclass, field
 from enum import Enum
+from hashlib import sha256
+from itertools import combinations
+from math import ceil, exp
+from random import Random
 
 from cmvr.communication.unreliable import LinkConfig
 from cmvr.mapping import BeliefMap, MapUpdate
@@ -38,6 +39,23 @@ class ReplicaPolicy(str, Enum):
     UTILITY_TRIGGERED_REPAIR = "utility_triggered_repair"
     DEADLINE_AWARE_REPAIR = "deadline_aware_repair"
     CERTIFICATE_REPAIR = "certificate_repair"
+    # Rejected auxiliary variants retained only for the matched route-witness
+    # gate ablation.  Final CARE is CERTIFICATE_REPAIR: the exact scenario
+    # certificate already applies its action-divergence/round-trip deadline and
+    # does not union either route-witness variant.
+    CERTIFICATE_REPAIR_ROUTE_GATE = "certificate_repair_route_gate"
+    CERTIFICATE_REPAIR_NO_COMMITMENT_GATE = "certificate_repair_no_commitment_gate"
+    # Canonical names state exactly what the codec-matched adaptations do.  The
+    # legacy aliases retain config compatibility without claiming that these
+    # binary-cell selectors reproduce the source papers' richer models/codecs.
+    OCBC_FS_REPAIR = "ocbc_forward_simulation"
+    OCBC_FORWARD_SIMULATION = "ocbc_forward_simulation"
+    PGSC_REPAIR = "path_guided_compression"
+    PATH_GUIDED_COMPRESSION = "path_guided_compression"
+    BRD_REPAIR = "rate_distortion_compression"
+    RATE_DISTORTION_COMPRESSION = "rate_distortion_compression"
+    VOI_PER_BYTE_REPAIR = "voi_repair"
+    VOI_REPAIR = "voi_repair"
     PATH_AWARE_TOP_K_REPAIR = "path_aware_top_k_repair"
     SINGLE_CELL_SENSITIVITY_REPAIR = "single_cell_sensitivity_repair"
     SCUTTLEBUTT_DEPTH = "scuttlebutt_depth"
@@ -70,6 +88,9 @@ class PSRConfig:
     iblt_partitions: int = 16
     merkle_fanout: int = 16
     merkle_session_steps: int = 4
+    external_candidate_multiplier: int = 2
+    ocbc_samples: int = 128
+    algorithm_seed: int = 20260813
     link: LinkConfig = field(default_factory=LinkConfig)
 
     def __post_init__(self) -> None:
@@ -99,6 +120,10 @@ class PSRConfig:
             raise ValueError("Merkle fanout must lie in [2, 255]")
         if self.merkle_session_steps < 1:
             raise ValueError("Merkle session length must be positive")
+        if self.external_candidate_multiplier < 1 or self.ocbc_samples < 1:
+            raise ValueError("external candidate multiplier and OCBC samples must be positive")
+        if self.algorithm_seed < 0:
+            raise ValueError("algorithm seed must be non-negative")
 
     def max_digest_cells_per_message(self) -> int:
         """Largest digest fitting one sender's control budget.
@@ -168,6 +193,320 @@ class TaskAwareRepairPlan:
     candidate_cells: tuple[Coordinate, ...]
     sensitive_cells: int = 0
     infeasible_cells: int = 0
+
+
+def path_guided_spatial_coverage_plan(
+    belief: BeliefMap, path: tuple[Coordinate, ...], *,
+    max_horizon: int, max_cells: int, sigma: float,
+    coverage_sigma: float | None = None, candidate_multiplier: int = 2,
+) -> TaskAwareRepairPlan:
+    """Greedily cover path-weighted uncertainty with exact-cell queries.
+
+    This *Path-Guided Spatial-Coverage* (PGSC) rule is a codec-matched inspired
+    adaptation, not a reproduction of multiresolution map compression.  For
+    unknown demand cells ``u`` it greedily maximizes the monotone facility-
+    location objective
+
+    ``sum_u path_weight(u) * max_{s in S} spatial_kernel(u, s)``.
+
+    The diversity term makes PGSC different from path-proximity Top-K while
+    every selected member of ``S`` remains an ordinary exact versioned cell;
+    no untransmitted cell is reconstructed or written into the replica.
+    """
+    coverage_sigma = sigma if coverage_sigma is None else coverage_sigma
+    if (
+        max_horizon < 1 or max_cells < 0 or sigma <= 0
+        or coverage_sigma <= 0 or candidate_multiplier < 1
+    ):
+        raise ValueError("PGSC bounds and kernel widths must be valid")
+    all_candidates = tuple(
+        (x, y) for x in range(belief.shape[0]) for y in range(belief.shape[1])
+        if int(belief.occupancy[x, y]) < 0
+    )
+    imminent = path[1:max_horizon + 1] or path[:1]
+    if not all_candidates or max_cells == 0:
+        return TaskAwareRepairPlan((), all_candidates)
+
+    # A bounded path-weighted proposal pool keeps the greedy coverage step
+    # practical on large maps.  This is a declared compute cap, not hidden map
+    # compression: every proposal and selected item is still an exact cell.
+    proposal_count = min(
+        len(all_candidates), max_cells * candidate_multiplier,
+    )
+    candidates = tuple(sorted(
+        all_candidates,
+        key=lambda cell: (
+            -path_weight(cell, imminent, sigma=sigma),
+            path_distance(cell, imminent), cell[0], cell[1],
+        ),
+    )[:proposal_count])
+
+    demand_weights = {
+        cell: path_weight(cell, imminent, sigma=sigma) for cell in candidates
+    }
+    covered = {cell: 0.0 for cell in candidates}
+    remaining = set(candidates)
+    selected: list[Coordinate] = []
+    while remaining and len(selected) < max_cells:
+        best_cell: Coordinate | None = None
+        best_gain = -1.0
+        for cell in sorted(remaining):
+            gain = 0.0
+            for demand in candidates:
+                dx = demand[0] - cell[0]
+                dy = demand[1] - cell[1]
+                similarity = exp(
+                    -(dx * dx + dy * dy)
+                    / (2.0 * coverage_sigma * coverage_sigma)
+                )
+                gain += demand_weights[demand] * max(
+                    0.0, similarity - covered[demand],
+                )
+            key = (
+                gain,
+                -path_distance(cell, imminent),
+                -cell[0],
+                -cell[1],
+            )
+            best_key = (
+                best_gain,
+                -path_distance(best_cell, imminent) if best_cell is not None else -2**31,
+                -best_cell[0] if best_cell is not None else -2**31,
+                -best_cell[1] if best_cell is not None else -2**31,
+            )
+            if key > best_key:
+                best_cell, best_gain = cell, gain
+        assert best_cell is not None
+        selected.append(best_cell)
+        remaining.remove(best_cell)
+        for demand in candidates:
+            dx = demand[0] - best_cell[0]
+            dy = demand[1] - best_cell[1]
+            covered[demand] = max(
+                covered[demand],
+                exp(
+                    -(dx * dx + dy * dy)
+                    / (2.0 * coverage_sigma * coverage_sigma)
+                ),
+            )
+    return TaskAwareRepairPlan(tuple(selected), candidates)
+
+
+def bernoulli_rate_distortion_plan(
+    belief: BeliefMap, path: tuple[Coordinate, ...], *,
+    max_horizon: int, max_cells: int, sigma: float,
+    prior_blocked_probability: float = 0.2,
+    prior_strength: float = 1.0,
+    decoder_radius: int | None = None,
+) -> TaskAwareRepairPlan:
+    """Minimize Bernoulli decoder distortion using lossless exact cells.
+
+    This *Bernoulli Rate--Distortion* (BRD) rule is a zero-or-exact discrete
+    adaptation, not a reproduction of the continuous Gaussian transform and
+    quantizer in the source work.  A receiver-local kernel decoder estimates
+    ``q_u = P(blocked)`` exclusively from that receiver's known cells and a
+    frozen Beta prior.  Leaving ``u`` at zero rate incurs weighted squared
+    distortion ``path_weight(u) * q_u * (1-q_u)``; sending its canonical exact
+    record removes that term.  Since every record has the same wire rate, BRD
+    selects the largest distortion reductions under the common cell budget.
+    """
+    if max_horizon < 1 or max_cells < 0 or sigma <= 0:
+        raise ValueError("BRD bounds and kernel width must be valid")
+    if not 0.0 < prior_blocked_probability < 1.0 or prior_strength <= 0:
+        raise ValueError("BRD prior probability and strength must be positive")
+    decoder_radius = ceil(3.0 * sigma) if decoder_radius is None else decoder_radius
+    if decoder_radius < 1:
+        raise ValueError("BRD decoder radius must be positive")
+    candidates = tuple(
+        (x, y) for x in range(belief.shape[0]) for y in range(belief.shape[1])
+        if int(belief.occupancy[x, y]) < 0
+    )
+    imminent = path[1:max_horizon + 1] or path[:1]
+    probabilities = bernoulli_local_decoder_probabilities(
+        belief, candidates, sigma=sigma,
+        prior_blocked_probability=prior_blocked_probability,
+        prior_strength=prior_strength, decoder_radius=decoder_radius,
+    )
+    ranked = tuple(sorted(
+        candidates,
+        key=lambda cell: (
+            -(
+                path_weight(cell, imminent, sigma=sigma)
+                * probabilities[cell] * (1.0 - probabilities[cell])
+            ),
+            path_distance(cell, imminent), cell[0], cell[1],
+        ),
+    ))
+    return TaskAwareRepairPlan(ranked[:max_cells], ranked)
+
+
+def bernoulli_local_decoder_probabilities(
+    belief: BeliefMap, candidates: tuple[Coordinate, ...], *, sigma: float,
+    prior_blocked_probability: float = 0.2, prior_strength: float = 1.0,
+    decoder_radius: int | None = None,
+) -> dict[Coordinate, float]:
+    """Return receiver-local Bernoulli predictions without truth/peer access."""
+    if len(set(candidates)) != len(candidates):
+        raise ValueError("Bernoulli decoder candidates must be unique")
+    if sigma <= 0 or not 0.0 < prior_blocked_probability < 1.0 or prior_strength <= 0:
+        raise ValueError("Bernoulli decoder kernel and prior must be positive")
+    decoder_radius = ceil(3.0 * sigma) if decoder_radius is None else decoder_radius
+    if decoder_radius < 1:
+        raise ValueError("Bernoulli decoder radius must be positive")
+    result: dict[Coordinate, float] = {}
+    for x, y in candidates:
+        if not belief.in_bounds(x, y) or int(belief.occupancy[x, y]) >= 0:
+            raise ValueError("Bernoulli decoder candidates must be local UNKNOWN cells")
+        blocked_mass = prior_strength * prior_blocked_probability
+        total_mass = prior_strength
+        for nx in range(max(0, x - decoder_radius), min(belief.shape[0], x + decoder_radius + 1)):
+            for ny in range(max(0, y - decoder_radius), min(belief.shape[1], y + decoder_radius + 1)):
+                state = int(belief.occupancy[nx, ny])
+                if state < 0:
+                    continue
+                dx, dy = nx - x, ny - y
+                weight = exp(-(dx * dx + dy * dy) / (2.0 * sigma * sigma))
+                blocked_mass += weight * float(state == 1)
+                total_mass += weight
+        result[(x, y)] = blocked_mass / total_mass
+    return result
+
+
+# Backwards-compatible import names.  Their implementations and public
+# documentation intentionally use the honest PGSC/BRD adaptation names.
+path_guided_compression_plan = path_guided_spatial_coverage_plan
+rate_distortion_compression_plan = bernoulli_rate_distortion_plan
+
+
+def ocbc_forward_simulation_plan(
+    candidates: tuple[Coordinate, ...],
+    optimistic_path: tuple[Coordinate, ...],
+    blocked_paths: dict[Coordinate, tuple[Coordinate, ...]], *,
+    max_horizon: int, max_cells: int, samples: int, seed: int,
+    blocked_probabilities: dict[Coordinate, float] | None = None,
+) -> TaskAwareRepairPlan:
+    """Select exact cells with an OCBC-inspired forward-simulation score.
+
+    This is *OCBC-FS Repair*, an inspired adaptation rather than an exact OCBC
+    reproduction.  Joint Bernoulli worlds are sampled with a fixed compute
+    budget from caller-supplied local priors (or an explicit 0.5 default).
+    Each cell arm is valued by its expected bounded safe-progress improvement,
+    and positive arms are selected under the exact-cell query cap.  The source
+    OCBC algorithm additionally models teammate beliefs and uses CSAR; neither
+    is silently approximated here.  No belief map, peer replica, or true map is
+    accepted by this pure selector.
+    """
+    if max_horizon < 1 or max_cells < 0 or samples < 1:
+        raise ValueError("OCBC bounds and sample budget must be positive")
+    if len(set(candidates)) != len(candidates):
+        raise ValueError("OCBC candidates must be unique")
+    if set(blocked_paths) != set(candidates):
+        raise ValueError("OCBC requires one blocked counterfactual per candidate")
+    probabilities = _validated_blocked_probabilities(
+        candidates, blocked_probabilities,
+    )
+    rng = Random(seed)
+    worlds = tuple(
+        frozenset(
+            cell for cell in candidates if rng.random() < probabilities[cell]
+        )
+        for _ in range(samples)
+    )
+    baseline = tuple(
+        _bounded_safe_progress(optimistic_path, world, max_horizon)
+        for world in worlds
+    )
+    ranked: list[tuple[float, int, Coordinate]] = []
+    for index, cell in enumerate(candidates):
+        reward = sum(
+            max(
+                0.0,
+                (
+                    _bounded_safe_progress(blocked_paths[cell], world, max_horizon)
+                    if cell in world else baseline[sample_index]
+                ) - baseline[sample_index],
+            )
+            for sample_index, world in enumerate(worlds)
+        ) / samples
+        if reward > 0:
+            ranked.append((-reward, index, cell))
+    ranked.sort()
+    selected = tuple(item[2] for item in ranked[:max_cells])
+    return TaskAwareRepairPlan(selected, candidates, sensitive_cells=len(ranked))
+
+
+def voi_per_byte_plan(
+    candidates: tuple[Coordinate, ...],
+    optimistic_path: tuple[Coordinate, ...],
+    blocked_paths: dict[Coordinate, tuple[Coordinate, ...]], *,
+    max_horizon: int, max_cells: int,
+    blocked_probabilities: dict[Coordinate, float] | None = None,
+    query_entry_bytes: int = 6, patch_entry_bytes: int = 13,
+) -> TaskAwareRepairPlan:
+    """Rank exact cells by locally estimated task value per marginal byte.
+
+    This *VoI-per-Byte Repair* rule is a codec-matched task-value adaptation,
+    not a claim to reproduce a particular belief-space communication system.
+    Revealing FREE leaves the optimistic plan unchanged; revealing BLOCKED
+    invokes the supplied local counterfactual.  Its expected bounded-progress
+    gain is divided by the actual marginal query-plus-patch record cost.  The
+    fixed query/patch headers do not affect ranking and remain charged by the
+    transport.  Priors are explicit inputs, and the pure selector accepts no
+    true map or peer replica.
+    """
+    if max_horizon < 1 or max_cells < 0:
+        raise ValueError("VoI bounds must be valid")
+    if query_entry_bytes < 1 or patch_entry_bytes < 1:
+        raise ValueError("VoI wire entry sizes must be positive")
+    if len(set(candidates)) != len(candidates):
+        raise ValueError("VoI candidates must be unique")
+    if set(blocked_paths) != set(candidates):
+        raise ValueError("VoI requires one blocked counterfactual per candidate")
+    probabilities = _validated_blocked_probabilities(
+        candidates, blocked_probabilities,
+    )
+    marginal_bytes = query_entry_bytes + patch_entry_bytes
+    ranked = []
+    for index, cell in enumerate(candidates):
+        blocked = frozenset((cell,))
+        baseline = _bounded_safe_progress(optimistic_path, blocked, max_horizon)
+        informed = _bounded_safe_progress(blocked_paths[cell], blocked, max_horizon)
+        score = probabilities[cell] * max(0.0, informed - baseline) / marginal_bytes
+        if score > 0:
+            ranked.append((-score, index, cell))
+    ranked.sort()
+    selected = tuple(item[2] for item in ranked[:max_cells])
+    return TaskAwareRepairPlan(selected, candidates, sensitive_cells=len(ranked))
+
+
+def _validated_blocked_probabilities(
+    candidates: tuple[Coordinate, ...],
+    probabilities: dict[Coordinate, float] | None,
+) -> dict[Coordinate, float]:
+    """Validate explicit local priors without consulting hidden state."""
+    if probabilities is None:
+        return {cell: 0.5 for cell in candidates}
+    if set(probabilities) != set(candidates):
+        raise ValueError("blocked probabilities require exactly one value per candidate")
+    if any(not 0.0 <= float(value) <= 1.0 for value in probabilities.values()):
+        raise ValueError("blocked probabilities must lie in [0, 1]")
+    return {cell: float(probabilities[cell]) for cell in candidates}
+
+
+def _bounded_safe_progress(
+    path: tuple[Coordinate, ...], blocked: frozenset[Coordinate], horizon: int,
+) -> float:
+    """Normalized progress before the first sampled blocked transition."""
+    if not path:
+        return 0.0
+    safe_steps = 0
+    for cell in path[1:horizon + 1]:
+        if cell in blocked:
+            break
+        safe_steps += 1
+    if len(path) - 1 <= horizon and safe_steps == len(path) - 1:
+        return 1.0
+    return safe_steps / horizon
 
 
 def decision_candidate_cells(
@@ -352,6 +691,7 @@ def deadline_decision_repair_plan(
     round_trip_steps: int,
     max_horizon: int,
     max_cells: int,
+    enforce_deadline: bool = True,
 ) -> DecisionRepairPlan:
     """Build the byte-minimal witness query used by deadline-aware CARE.
 
@@ -375,7 +715,7 @@ def deadline_decision_repair_plan(
         return DecisionRepairPlan(True, False, None, round_trip_steps, ())
     slack = max(0, first_unknown - 1)
     feasible = slack >= round_trip_steps
-    if not feasible or max_cells == 0:
+    if (not feasible and enforce_deadline) or max_cells == 0:
         return DecisionRepairPlan(True, feasible, slack, round_trip_steps, ())
 
     opt_stop = min(len(optimistic_path), max_horizon + 1)
