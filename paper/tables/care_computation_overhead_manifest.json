@@ -1,0 +1,110 @@
+{
+  "complete": true,
+  "analysis_only": true,
+  "new_experiments_run": false,
+  "source": {
+    "directory": "outputs/care_closest_work_baselines_fov_100map",
+    "results": "outputs/care_closest_work_baselines_fov_100map/results.csv",
+    "summary": "outputs/care_closest_work_baselines_fov_100map/summary.json",
+    "config": "configs/care_closest_work_baselines_fov_100map.yaml",
+    "results_sha256": "6946e96bbbc6d185cf85f97927daa262778f0e60afbd2b5a6ea2e8b95026f985",
+    "summary_sha256": "ed78f0ef6e884cdda084240207b808b4bf4b6f841f051ab7ba4855268eb7a1a7",
+    "config_sha256": "ca2e49c0068585384eacd5d3aef314d59502dc6a99e009671171f41e72028032"
+  },
+  "condition": {
+    "instance_family": "multifork_cluttered",
+    "map_size": 32,
+    "num_agents": 8,
+    "observation_radius": 2,
+    "fov": "5x5",
+    "density": 0.2,
+    "loss_probability": 0.3,
+    "delay_steps": 0,
+    "planners": [
+      "astar",
+      "dstar_lite"
+    ],
+    "policies": [
+      "one_shot_delta",
+      "path_aware_top_k_repair",
+      "single_cell_sensitivity_repair",
+      "deadline_aware_repair",
+      "certificate_repair"
+    ],
+    "independent_maps_per_condition": 100,
+    "workers": 32
+  },
+  "source_audit": {
+    "source_rows": 6000,
+    "source_groups": 60,
+    "source_groups_all_have_100_paired_keys": true,
+    "selected_rows": 1000,
+    "selected_groups": 10,
+    "workers": 32,
+    "worker_semantics": "32 workers parallelized independent episodes; each method episode and CARE certificate ran in one worker process",
+    "role_aware_fields_present": [
+      "all_seekers_success",
+      "completed_mask",
+      "critical_pair_success_rate",
+      "observer_success_rate",
+      "seeker_success_rate"
+    ],
+    "observer_success_invariant": 1.0,
+    "paired_key_fields": [
+      "layout_seed",
+      "network_seed"
+    ],
+    "paired_keys_per_condition": 100,
+    "paired_keys_exactly_0_through_99": true,
+    "unique_instance_fingerprints": 100,
+    "unique_layout_fingerprints": 100,
+    "same_instance_per_paired_key_across_planners_and_methods": true,
+    "same_network_seed_per_paired_key_across_planners_and_methods": true,
+    "keyed_loss_seed_schedule_sha256": "55dc64db15936d0809d3745eb23c9d79eff6a4b1bb38c16f3c4edc5e344d77d1",
+    "common_packet_loss_contract": "same derived link seed; the transport hashes link seed and stable packet link_key so common packets have identical loss draws",
+    "summary_config_exactly_matches_yaml": true,
+    "common_control_cap_bytes": 512,
+    "care_path_single_query_cap_cells": 8,
+    "care_path_single_query_cap_bytes": 64,
+    "care_lite_query_cap_cells": 82,
+    "care_lite_query_cap_bytes": 508,
+    "query_cap_scope": "CARE, Path Top-K and Single-Cell use the additional 8-cell/64-byte algorithmic cap; CARE-Lite uses the codec maximum under the common 512-byte control cap and is not a query-cap-matched comparator",
+    "selected_input_sha256": "2d8b186211c6b0728757e26f3adac1715ca13b97077102f3101cfa8aaa46cdd2"
+  },
+  "metric_semantics": {
+    "episode_cpu_ms": "per-episode process CPU measured by time.process_time; not wall clock",
+    "planning_cpu_ms": "instrumentation-specific planning block; includes the full CARE and Single-Cell selector, only the pessimistic plan for CARE-Lite, and excludes Path Top-K selection; not a cross-method primary runtime",
+    "certificate_cpu_ms": "subset of planning CPU spent inside exact CARE certificate construction",
+    "method_extra_planning_calls": "plans beyond shared optimistic replans: Single-Cell blocked, CARE-Lite pessimistic, or CARE scenario calls",
+    "certificate_scenario_planning_calls": "exact sparse-scenario replans; zero outside CARE",
+    "candidate_cells": "episode-total task-aware proposal cells for Path/Single or capped scenario candidates for CARE; not separately recorded for One-shot/CARE-Lite",
+    "query_cells": "episode-total cells submitted to the common query-patch codec",
+    "care_minus_method_episode_cpu_ms": "paired map-level CARE minus method process CPU",
+    "care_to_method_episode_cpu_ratio": "ratio of paired-map episode CPU sums; not mean of per-map ratios"
+  },
+  "confidence_interval": {
+    "draws": 20000,
+    "public_base_seed": 20260814,
+    "cluster": "whole paired map/network-seed key",
+    "index_matrix": "shared deterministic matrix from scripts/bootstrap_ci.py for map_count=100",
+    "marginal": "percentile interval for map-level mean",
+    "difference": "paired percentile interval for CARE-minus-method mean",
+    "ratio": "paired percentile interval for ratio of sums"
+  },
+  "timing_limit": "32 workers parallelized independent single-process episodes; CIs measure between-map variation within that frozen run, not repeated-machine timing uncertainty or online wall latency",
+  "comparison_limit": "CARE-Lite shares the codec and 512-byte control channel but not the additional 8-cell/64-byte algorithmic cap used by CARE, Path Top-K and Single-Cell",
+  "provenance_limit": "the frozen run summary did not record generation git SHA, CPU model, frequency controls, CPU pinning, or isolated wall-clock timing",
+  "output_rows": 10,
+  "artifacts": {
+    "csv": "paper/tables/care_computation_overhead.csv",
+    "csv_sha256": "d6c78bf508e80c81b4754d0059ea9bae8962165d9fe89d8fcb65a7e84d861082",
+    "markdown": "paper/tables/care_computation_overhead.md",
+    "markdown_sha256": "9798817515f3c68a2a434c056fb551f3d2b67735c75d7b9f3e030376897637a3"
+  },
+  "implementation": {
+    "script": "scripts/analyze_care_computation_overhead.py",
+    "script_sha256": "56ce4ced59e4e59562e0edb719eac94376337e7349da1223a5d6d72c4bfde3a4",
+    "bootstrap_module": "scripts/bootstrap_ci.py",
+    "bootstrap_module_sha256": "681825b82d0a7aa99f5b5459dc7c30347fd47aae8df894935f65b70d0115804f"
+  }
+}

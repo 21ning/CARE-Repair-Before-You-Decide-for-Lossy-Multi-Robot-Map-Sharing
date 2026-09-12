@@ -60,15 +60,20 @@ spelled out in [`CLOSEST_WORK_ADAPTATIONS.md`](CLOSEST_WORK_ADAPTATIONS.md).
 All ladder policies share:
 
 - the receiver's explicit local replica, goal and planner interface;
-- at most eight query cells (`16 + 6×8 = 64` encoded query bytes);
 - one-peer schedule, cadence, version stamps and query/patch codecs;
 - 4,459-byte data and 512-byte control caps;
 - the same layout, directed packet-loss trace, delay and attempted-byte
   accounting.
 
-The common constraint is the maximum query budget, not CARE's realized query
-length. Giving another method that length would leak certificate computation.
-Actual patch/traffic totals are therefore reported, not normalized away.
+CARE, Path-Aware Top-K, Single-Cell and the four closest-work adaptations also
+share an additional limit of at most eight query cells (`16 + 6×8 = 64`
+encoded query bytes). CARE-Lite predates that matched-cap ladder: it uses the
+same codec and 512-byte control channel but may select up to 82 cells (508
+encoded bytes). It is retained as a transparent lightweight ablation, not
+described as a query-cap-matched comparator. For the matched controls, the
+common constraint is the maximum query budget, not CARE's realized query
+length; giving another method that length would leak certificate computation.
+Actual patch/traffic totals are reported rather than normalized away.
 Algorithmic Monte Carlo seeds are separate from link seeds.
 
 ## Controlled 100-map result

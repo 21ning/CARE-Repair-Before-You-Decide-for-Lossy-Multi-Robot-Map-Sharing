@@ -104,7 +104,10 @@ def analyze(input_directory: Path, output_directory: Path) -> None:
         // int(config["digest_entry_bytes"]),
     )
     if int(config["digest_base_bytes"]) + int(config["digest_entry_bytes"]) * query_cap_cells != 64:
-        raise ValueError("closest-work matrix no longer has the declared 64-byte query cap")
+        raise ValueError(
+            "closest-work task-aware controls no longer have their declared "
+            "64-byte query cap"
+        )
     required = set(METRICS) | {"layout_seed", "network_seed", "layout_fingerprint"}
     missing = required - set(rows[0])
     if missing:
@@ -207,8 +210,10 @@ def analyze(input_directory: Path, output_directory: Path) -> None:
         "policies": list(POLICIES), "loss_probability": .3, "delay_steps": 0,
         "comparison_scope": (
             "codec-matched adaptations, not exact reproductions of source systems; "
-            "all use the same explicit binary map, query-patch codec, 64-byte query "
-            "cap, link trace, planner and byte accounting"
+            "CARE, Path Top-K, Single-Cell and the four closest-work adaptations "
+            "use the same explicit binary map, query-patch codec, 64-byte query "
+            "cap, link trace, planner and byte accounting; CARE-Lite shares the "
+            "codec and 512-byte control cap but not the additional 8-cell cap"
         ),
         "confidence_interval": f"{BOOTSTRAP_DRAWS}-draw paired map-cluster bootstrap",
     }

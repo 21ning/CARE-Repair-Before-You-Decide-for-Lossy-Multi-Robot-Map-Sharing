@@ -197,7 +197,26 @@ python scripts/analyze_care_closest_work.py \
 python scripts/make_care_closest_work_artifacts.py \
   --analysis-directory /tmp/care-closest-analysis \
   --table-directory paper/tables --figure-directory paper/figures
+
+# Analysis-only computation audit; this does not invoke an experiment runner.
+python scripts/analyze_care_computation_overhead.py \
+  --input-directory /tmp/care-closest \
+  --config configs/care_closest_work_baselines_fov_100map.yaml \
+  --table-directory paper/tables
 ```
+
+The computation audit requires the complete 6,000-row closest-work matrix and
+selects its matched 5×5, 30%-loss, zero-delay anchor. It verifies 32 workers,
+100 paired maps, role-aware fields, frozen config equality, instance/layout
+fingerprints and source hashes before writing the table. `episode_cpu_ms` is
+single-process CPU time recorded inside each episode; the 32 workers execute
+episodes concurrently and are not an implementation of intra-episode CARE
+parallelism. The result is a diagnostic compute comparison, not a wall-clock
+or real-time benchmark. The manifest also records the asymmetric algorithmic
+query caps: CARE/Path Top-K/Single-Cell use 8 cells (64 encoded bytes), whereas
+CARE-Lite uses the codec maximum under the common 512-byte control cap (up to
+82 cells or 508 encoded bytes). CARE-Lite is therefore not described as a
+query-cap-matched comparator.
 
 ## Cross-study audit
 

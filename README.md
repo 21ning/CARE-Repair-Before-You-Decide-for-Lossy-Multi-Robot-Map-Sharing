@@ -76,6 +76,20 @@ is the explicit bounded joint-scenario certificate, not universal empirical
 dominance. See
 [closest-work adaptations](docs/CLOSEST_WORK_ADAPTATIONS.md).
 
+The same frozen closest-work matrix also supplies a computation audit; no new
+episodes are used for this analysis. CARE-Lite shares the codec and 512-byte
+control cap but not CARE's additional 8-cell/64-byte algorithmic query cap, so
+its CPU ratio is an implementation comparison rather than a cap-matched one.
+CARE consumes 1350.8 ms [1298.9, 1411.3]
+of process CPU per A* episode and 1561.6 ms [1473.7, 1659.6] per D* Lite
+episode. These are 4.43× [4.22, 4.64] and 3.26× [3.03, 3.52] the paired
+One-shot CPU, respectively. The 32 workers parallelized independent episodes;
+each episode and all eight robots within it ran in one process. The measurements
+therefore establish material bounded-certificate cost, not wall-clock latency
+or a real-time guarantee. Full means, sample SDs, map-bootstrap CIs, operation
+counts and source hashes are in the
+[computation-overhead table](paper/tables/care_computation_overhead.md).
+
 The natural-map test is an important negative boundary. CARE-minus-One-shot
 seeker CSR is `+0.0050 [-0.0050, 0.0150]` with A* and `-0.0025 [-0.0125,
 0.0075]` with D* Lite. Against No Communication it is `+0.0200 [-0.0050,

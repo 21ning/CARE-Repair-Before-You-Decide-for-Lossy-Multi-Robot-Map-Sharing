@@ -128,7 +128,10 @@ all-robot completion has a structural .5 floor and is only diagnostic:
 Our primary endpoint is seeker CSR. We report mean episode length (EL),
 attempted KB, and 20,000-draw bootstrap 95\% confidence intervals (CIs) that
 resample whole maps through one fixed public resampling index. Differences are
-paired within the same map and loss trace.
+paired within the same map and loss trace. CPU measurements use per-episode
+process time. The 32 batch workers execute independent episodes; CARE itself
+is single-process in each episode, so these measurements are diagnostic
+compute cost rather than wall-clock latency.
 
 The primary 5$\times$5, 30\%-loss point uses 100 controlled maps. They are
 independent background-clutter realizations under one protected multifork
@@ -146,6 +149,9 @@ path-guided spatial coverage (PGSC), Bernoulli rate--distortion allocation
 match CARE; their scores do not use CARE's joint hitting-set certificate.
 All blocked counterfactuals use canonical A* on the common unit-cost graph,
 while the executed planner is independently A* or D* Lite.
+CARE-Lite is a legacy ablation: it shares the codec and 512-byte control cap
+but not CARE's additional 8-cell algorithmic query cap, and is not called a
+matched-cap comparator.
 
 External validity is tested on 100 immutable Bernoulli maps conditioned, before
 any policy runs, on a frozen action-conflict, visibility, path-length,
@@ -203,6 +209,36 @@ saves about 9.5~KB. Against VoI-per-byte, the differences are $+.0125$
 dominance; it supports a compact exact certificate relative to broader path
 allocation.
 
+\begin{table}[t]
+\caption{Diagnostic process CPU at the controlled primary point. Entries are
+A*/D* Lite means over 100 paired maps; extra plans are method-specific calls
+beyond the shared operational replans.}
+\label{tab:compute}
+\centering
+\scriptsize
+\begin{tabular}{lrrr}
+\toprule
+Method & Episode CPU (ms) & CPU / One-shot & Extra plans\\
+\midrule
+One-shot & 305 / 478 & 1.00 / 1.00 & 0 / 0\\
+Path Top-K & 324 / 511 & 1.06 / 1.07 & 0 / 0\\
+Single-Cell & 487 / 664 & 1.60 / 1.39 & 685 / 678\\
+CARE-Lite & 345 / 512 & 1.13 / 1.07 & 200 / 200\\
+CARE & 1351 / 1562 & 4.43 / 3.26 & 2985 / 2947\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:compute} exposes the price of exact certification. CARE spends
+1026 $[985,1074]$/1065 $[1003,1133]$ process-ms per A*/D* Lite episode inside
+certificate construction. Total episode CPU is 4.43 $[4.22,4.64]$/3.26
+$[3.03,3.52]$ times One-shot and 3.92 $[3.68,4.17]$/3.05
+$[2.81,3.31]$ times CARE-Lite. These paired ratio CIs come from the same
+frozen run. No isolated per-tick wall-clock benchmark was recorded, so this
+does not establish a real-time guarantee. CARE-Lite's row compares the
+implemented methods; unlike Path Top-K and Single-Cell, it does not share
+CARE's additional 8-cell query cap.
+
 \begin{figure}[t]
  \centering
  \includegraphics[width=\columnwidth]{care_closest_work.png}
@@ -250,12 +286,12 @@ decision-critical loss; it is not evidence of a broad gain on arbitrary maps.
  \label{fig:natural-scale}
 \end{figure}
 
-Exact certification also has measurable compute cost because up to 37
-scenarios and 256 candidate subsets are evaluated online. The caps make the
-optimization finite and auditable, but do not make it negligible. This
-tradeoff, the frequent paired intervals that include zero against simpler
-controls, conditioning on the natural-suite predicate bundle, finite 25-step controlled horizon,
-and the common controlled decision template are the principal limitations.
+Exact certification evaluates up to 37 scenarios and 256 candidate subsets
+per check. The caps make the optimization finite and auditable, not negligible.
+This measured cost, the frequent paired intervals that include zero against
+simpler controls, conditioning on the natural-suite predicate bundle, finite
+25-step controlled horizon, and the common controlled decision template are
+the principal limitations.
 
 \section{Conclusion}
 CARE formulates explicit-map repair as minimum encoded-query separation of all

@@ -28,6 +28,6 @@
   ],
   "loss_probability": 0.3,
   "delay_steps": 0,
-  "comparison_scope": "codec-matched adaptations, not exact reproductions of source systems; all use the same explicit binary map, query-patch codec, 64-byte query cap, link trace, planner and byte accounting",
+  "comparison_scope": "codec-matched adaptations, not exact reproductions of source systems; CARE, Path Top-K, Single-Cell and the four closest-work adaptations use the same explicit binary map, query-patch codec, 64-byte query cap, link trace, planner and byte accounting; CARE-Lite shares the codec and 512-byte control cap but not the additional 8-cell cap",
   "confidence_interval": "20000-draw paired map-cluster bootstrap"
 }

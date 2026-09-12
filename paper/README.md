@@ -7,7 +7,10 @@ manifests used to audit the paper's numerical claims. The evidence package
 covers the role-aware six-loss controlled matrix, matched sensing extensions,
 generic reconciliation controls, codec-matched closest-work adaptations,
 zero-byte/full-sync endpoints, the rejected auxiliary route-witness gate,
-conditioned natural maps and non-tiled 4--32-agent validation.
+conditioned natural maps, non-tiled 4--32-agent validation, and a frozen
+analysis-only computation audit. The latter is tracked as
+`tables/care_computation_overhead.{csv,md}` with a source-integrity manifest;
+it reports process CPU rather than claiming wall-clock real-time performance.
 
 The raw 100-map episode outputs are not bundled in the submission code
 repository. They can be regenerated from the frozen code and configurations

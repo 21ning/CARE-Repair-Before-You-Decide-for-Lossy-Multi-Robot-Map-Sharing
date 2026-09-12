@@ -26,7 +26,8 @@ structures.
 | CARE improves over One-shot on the natural conditioned population. | A*: +0.0050 [-0.0050, 0.0150]; D*: -0.0025 [-0.0125, 0.0075]. | **Not supported.** Both intervals cross zero. |
 | CARE improves over No Communication on the natural conditioned population. | A*: +0.0200 [-0.0050, 0.0450]; D*: +0.0175 [-0.0075, 0.0450]. | **Not supported.** The target population is conditioned Bernoulli maps, not unconditioned random MAPF. |
 | CARE generalizes across non-tiled 4/8/16/32-robot natural scale. | All eight CARE-minus-One-shot seeker CIs cross zero. | **Not supported.** The completed suite establishes an external-validity boundary, not broad gain. |
-| CARE has negligible overhead or passes the old 3× gate. | Exact/CARE-Lite episode CPU ratios exceed the old threshold. | **Rejected.** Compute is bounded and measured, not negligible. |
+| CARE has negligible overhead or consistently passes the old 3× gate. | CARE/CARE-Lite episode CPU is 3.916× [3.680, 4.172] with A* and 3.049× [2.805, 3.314] with D* Lite. | **Rejected.** A* exceeds 3×; the D* Lite interval crosses 3×. Compute is bounded and measured, not negligible or real-time-validated. |
+| Every task-aware row is query-cap matched to CARE. | Path Top-K, Single-Cell and the four closest-work adaptations use CARE's 8-cell/64-byte algorithmic cap; CARE-Lite uses the common codec and 512-byte control cap but may select up to 82 cells. | **Rejected for CARE-Lite.** It remains a legacy ablation and all traffic is measured, but it is not a matched-cap comparator. |
 | CARE dominates every baseline. | Retry-All and Periodic Full often obtain higher seeker CSR at much greater traffic. | **Rejected.** CARE is a selective low-traffic operating point. |
 | CARE outperforms DCC/SCRIMP/PPO. | No representation- and task-matched reproduction exists. | Not claimed; these learned-policy systems solve a different action/communication task. |
 

@@ -101,6 +101,44 @@ These results reject universal empirical dominance. The supported novelty is
 the bounded joint-scenario separation objective and an interpretable
 communication/compute tradeoff; path awareness explains much of the gain.
 
+## Computation overhead: measured, material, and diagnostic
+
+No new experiment was run for this audit. It reuses the 5×5, 30%-loss,
+zero-delay slice of the completed 6,000-execution closest-work matrix so that
+all methods come from the same frozen run and share 100 paired maps. CPU is
+per-process time from `time.process_time()`, not wall-clock latency.
+CARE, Path Top-K and Single-Cell share the 8-cell/64-byte algorithmic query
+cap. CARE-Lite shares the codec and 512-byte control channel but may query up
+to 82 cells (508 bytes); its CPU row is not a query-cap-matched comparison.
+
+| Planner | Method | Extra plans/episode | Episode CPU ms [95% CI] | CPU / One-shot [95% CI] |
+| --- | --- | ---: | ---: | ---: |
+| A* | One-shot | 0 | 305.2 [292.7, 319.9] | 1.000 |
+| A* | Path Top-K | 0 | 324.4 [310.8, 340.5] | 1.063 [0.994, 1.138] |
+| A* | Single-Cell | 685.05 | 487.0 [468.7, 509.3] | 1.596 [1.496, 1.702] |
+| A* | CARE-Lite | 200.00 | 344.9 [328.7, 363.1] | 1.130 [1.058, 1.209] |
+| A* | CARE | 2985.41 | 1350.8 [1298.9, 1411.3] | 4.426 [4.221, 4.642] |
+| D* Lite | One-shot | 0 | 478.4 [454.9, 504.8] | 1.000 |
+| D* Lite | Path Top-K | 0 | 510.8 [482.1, 542.0] | 1.068 [0.981, 1.161] |
+| D* Lite | Single-Cell | 678.22 | 663.8 [631.5, 701.2] | 1.388 [1.284, 1.500] |
+| D* Lite | CARE-Lite | 200.00 | 512.1 [485.9, 541.5] | 1.070 [0.994, 1.153] |
+| D* Lite | CARE | 2947.33 | 1561.6 [1473.7, 1659.6] | 3.264 [3.027, 3.521] |
+
+CARE spends 1026.0 [984.9, 1073.8]/1064.8 [1003.4, 1133.3] ms per
+A*/D* Lite episode inside certificate construction. Its total episode CPU is
+3.916× [3.680, 4.172]/3.049× [2.805, 3.314] CARE-Lite. The certificate
+performs 2985.41/2947.33 blocked-scenario replans per episode, corresponding
+to 14.93/14.74 replans and 5.13/5.32 ms of certificate CPU per check.
+
+The 32 workers parallelized independent episodes, not CARE within an episode.
+The frozen metadata did not record an isolated wall-clock microbenchmark,
+hardware-frequency controls or p95 per-tick latency. These data therefore
+reject a negligible-overhead claim and do not establish real-time capability.
+The complete mean/SD/CI table and source-integrity manifest are
+[`care_computation_overhead.md`](../paper/tables/care_computation_overhead.md)
+and
+[`care_computation_overhead_manifest.json`](../paper/tables/care_computation_overhead_manifest.json).
+
 ## Natural conditioned-map external-validity result
 
 The natural primary matrix contains 100 untouched i.i.d. Bernoulli maps
@@ -183,8 +221,10 @@ information oracle.
   execution under replicated load, not non-tiled scale generalization.
 - Generic random-map negative controls usually show no detected benefit,
   supporting the narrower decision-conflict claim.
-- Exact CARE has materially higher planning cost than CARE-Lite; “negligible
-  overhead” and the old 3× promotion gate are rejected claims.
+- Exact CARE has materially higher planning cost than CARE-Lite. It is 3.916×
+  [3.680, 4.172] with A*, while the D* Lite estimate is 3.049× [2.805, 3.314]
+  and its interval crosses the old 3× boundary. Thus “negligible overhead” is
+  rejected and CARE does not consistently satisfy that old promotion gate.
 
 ## Frozen controlled-population claim
 
